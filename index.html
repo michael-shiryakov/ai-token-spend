@@ -158,20 +158,91 @@
       .demo-badge[hidden] {
         display: none;
       }
-      .quit-btn {
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        background: transparent;
-        color: #d6e4df;
-        font: inherit;
-        font-size: 12px;
-        font-weight: 650;
-        padding: 6px 12px;
+      .provider-chip {
+        position: relative;
+      }
+      .provider-chip-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 10px 6px 8px;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(255, 255, 255, 0.06);
+        color: #fff;
+        font: 500 12.5px/1 inherit;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .provider-chip-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .provider-chip-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        flex-shrink: 0;
+        background: rgba(255, 255, 255, 0.3);
+      }
+      .provider-chip-dot.connected {
+        background: #72d0a9;
+      }
+      .provider-chip-caret {
+        display: flex;
+        color: rgba(255, 255, 255, 0.65);
+      }
+      .provider-menu {
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        width: 220px;
+        background: var(--surface-1);
+        border: 1px solid var(--border);
         border-radius: 8px;
+        box-shadow: var(--shadow);
+        z-index: 30;
+        padding: 6px;
+        box-sizing: border-box;
+      }
+      .provider-menu[hidden] {
+        display: none;
+      }
+      .provider-menu-key {
+        padding: 8px 10px 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        font-family: ui-monospace, monospace;
+      }
+      .provider-menu-item {
+        width: 100%;
+        text-align: left;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border: none;
+        background: none;
+        border-radius: 4px;
+        font: 500 13px/18px inherit;
+        color: var(--text-primary);
         cursor: pointer;
       }
-      .quit-btn:hover {
-        background: rgba(255, 255, 255, 0.08);
-        color: #fff;
+      .provider-menu-item:hover {
+        background: var(--surface-soft);
+      }
+      .provider-menu-item svg {
+        flex-shrink: 0;
+        color: var(--text-secondary);
+      }
+      .provider-menu-item-danger {
+        color: var(--serious);
+      }
+      .provider-menu-item-danger svg {
+        color: var(--serious);
+      }
+      .provider-menu-item:disabled {
+        opacity: 0.6;
+        cursor: default;
       }
       .page {
         width: min(1280px, calc(100% - 40px));
@@ -1041,7 +1112,106 @@
         <div class="connection-status">
           <i></i><span id="connectionStatus">Connecting&hellip;</span>
         </div>
-        <button id="quitAppBtn" class="quit-btn" type="button">Quit</button>
+        <div class="provider-chip" id="providerChip-anthropic">
+          <button
+            type="button"
+            class="provider-chip-btn"
+            id="providerChipBtn-anthropic"
+          >
+            <span class="provider-chip-dot"></span>
+            <span class="provider-chip-label">Anthropic</span>
+            <span class="provider-chip-caret"></span>
+          </button>
+          <div class="provider-menu" id="providerMenu-anthropic" hidden>
+            <div class="provider-menu-key"></div>
+            <button
+              type="button"
+              class="provider-menu-item"
+              data-action="change"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              ><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8M21 3v5h-5" /><path
+                  d="M21 12a9 9 0 0 1-15.3 6.4L3 16M3 21v-5h5"
+              /></svg>
+              <span>Change key</span>
+            </button>
+            <button
+              type="button"
+              class="provider-menu-item provider-menu-item-danger"
+              data-action="remove"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              ><path d="M4 7h16" /><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" /><path
+                  d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"
+              /></svg>
+              <span>Remove key</span>
+            </button>
+          </div>
+        </div>
+        <div class="provider-chip" id="providerChip-openai">
+          <button type="button" class="provider-chip-btn" id="providerChipBtn-openai">
+            <span class="provider-chip-dot"></span>
+            <span class="provider-chip-label">Connect OpenAI</span>
+            <span class="provider-chip-caret"></span>
+          </button>
+          <div class="provider-menu" id="providerMenu-openai" hidden>
+            <div class="provider-menu-key"></div>
+            <button
+              type="button"
+              class="provider-menu-item"
+              data-action="change"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              ><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8M21 3v5h-5" /><path
+                  d="M21 12a9 9 0 0 1-15.3 6.4L3 16M3 21v-5h5"
+              /></svg>
+              <span>Change key</span>
+            </button>
+            <button
+              type="button"
+              class="provider-menu-item provider-menu-item-danger"
+              data-action="remove"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              ><path d="M4 7h16" /><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" /><path
+                  d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"
+              /></svg>
+              <span>Remove key</span>
+            </button>
+          </div>
+        </div>
       </div>
     </header>
     <main class="page">
@@ -1659,15 +1829,21 @@
         return `${Math.round(n)}`;
       };
 
-      // Whether OpenAI is actually wired up is a server-side env-var fact
-      // (OPENAI_ENABLED in server.mjs) that isn't exposed via any endpoint —
-      // openaiSpend > 0 on real totals is the same live heuristic already
-      // used elsewhere (e.g. the Total spend KPI's subtitle).
+      // ANTHROPIC_ENABLED/OPENAI_ENABLED in server.mjs, injected into window.__ATS_PROVIDERS__
+      // (see loadIndexHtml) — the authoritative "is this provider actually connected" fact.
+      // Not derived from spend: a genuinely-connected provider can still show $0 in totals
+      // for the selected range, which the old anthropicSpend/openaiSpend > 0 heuristic here
+      // used to get wrong.
+      function providerConnected(key) {
+        const p = window.__ATS_PROVIDERS__;
+        return !!(p && p[key] && p[key].connected);
+      }
+
       function updateConnectionStatus(totals) {
         const el = document.getElementById("connectionStatus");
         if (!el || !totals) return;
-        const anthropicOn = totals.anthropicSpend > 0;
-        const openaiOn = totals.openaiSpend > 0;
+        const anthropicOn = providerConnected("anthropic");
+        const openaiOn = providerConnected("openai");
         const providers =
           anthropicOn && openaiOn
             ? "Anthropic and ChatGPT"
@@ -1683,7 +1859,7 @@
         el.textContent = `Providers connected: ${providers} · Updated today at ${time}`;
       }
 
-      // Same anthropicSpend/openaiSpend > 0 heuristic as updateConnectionStatus above, so this
+      // Same providerConnected() source of truth as updateConnectionStatus above, so this
       // banner and the "Add {provider}" KPI tile (see renderKpis) appear/disappear in lockstep
       // with the "Providers connected" line. Copy is intentionally asymmetric: per
       // available-data-points.md, seat/adoption data only exists on the Anthropic side, so only
@@ -1691,8 +1867,8 @@
       function renderConnectNudge(totals) {
         const banner = document.getElementById("connectBanner");
         if (!banner || !totals) return;
-        const anthropicOn = totals.anthropicSpend > 0;
-        const openaiOn = totals.openaiSpend > 0;
+        const anthropicOn = providerConnected("anthropic");
+        const openaiOn = providerConnected("openai");
         const missing =
           anthropicOn && !openaiOn
             ? "openai"
@@ -2926,8 +3102,8 @@
         // OpenAI is connected and Anthropic isn't does this REPLACE the adoption tile — its
         // "not available on this plan" wording would otherwise be misleading here, since the
         // real reason is "Anthropic isn't connected," not a plan limitation.
-        const anthropicOn = !!t && t.anthropicSpend > 0;
-        const openaiOn = !!t && t.openaiSpend > 0;
+        const anthropicOn = providerConnected("anthropic");
+        const openaiOn = providerConnected("openai");
         if (openaiOn && !anthropicOn) {
           const adoptionIdx = kpis.findIndex((k) => k.label === "Claude adoption rate");
           if (adoptionIdx !== -1) {
@@ -4200,19 +4376,112 @@
         if (demoBadge) demoBadge.hidden = false;
       }
 
-      // The packaged app has no menu bar/Cmd+Q — closing this browser tab leaves the local
-      // server running in the background (by design, so a reload doesn't lose your place),
-      // so this button is the actual way to stop it rather than hunting for Force Quit.
-      document.getElementById("quitAppBtn")?.addEventListener("click", async () => {
-        if (!confirm("Quit AI Spend Control? This stops the local server.")) return;
-        try {
-          await fetch("/quit", { method: "POST" });
-        } catch {
-          // The server closing its own connection before responding is expected, not an error.
+      // Header status chips: view the masked key, change it, or remove it, for each
+      // connected provider. window.__ATS_PROVIDERS__ (see server.mjs's loadIndexHtml) is the
+      // authoritative connected/masked state — not derived from spend data, since a
+      // genuinely-connected provider can still have $0 spend in the selected range.
+      (function initProviderChips() {
+        const PROVIDER_NAMES = { anthropic: "Anthropic", openai: "OpenAI" };
+        const CHEVRON_DOWN_SVG =
+          '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+        const PLUS_SVG =
+          '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+
+        function closeAllMenus() {
+          ["anthropic", "openai"].forEach((key) => {
+            const menu = document.getElementById("providerMenu-" + key);
+            if (menu) menu.hidden = true;
+          });
         }
-        document.body.innerHTML =
-          '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui,sans-serif;color:#5b6560;font-size:14px;">AI Spend Control has quit - you can close this tab.</div>';
-      });
+
+        ["anthropic", "openai"].forEach((key) => {
+          const chip = document.getElementById("providerChip-" + key);
+          const btn = document.getElementById("providerChipBtn-" + key);
+          const menu = document.getElementById("providerMenu-" + key);
+          if (!chip || !btn || !menu) return;
+          const info = (window.__ATS_PROVIDERS__ || {})[key] || {
+            connected: false,
+            masked: null,
+          };
+
+          chip.querySelector(".provider-chip-dot").classList.toggle(
+            "connected",
+            info.connected,
+          );
+          chip.querySelector(".provider-chip-label").textContent =
+            info.connected ? PROVIDER_NAMES[key] : "Connect " + PROVIDER_NAMES[key];
+          chip.querySelector(".provider-chip-caret").innerHTML = info.connected
+            ? CHEVRON_DOWN_SVG
+            : PLUS_SVG;
+          if (info.connected) {
+            menu.querySelector(".provider-menu-key").textContent = info.masked || "";
+          }
+
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (!info.connected) {
+              location.href = "/connect";
+              return;
+            }
+            const willOpen = menu.hidden;
+            closeAllMenus();
+            menu.hidden = !willOpen;
+          });
+
+          const changeBtn = menu.querySelector('[data-action="change"]');
+          changeBtn.addEventListener("click", () => {
+            location.href = "/connect?provider=" + key;
+          });
+
+          const removeBtn = menu.querySelector('[data-action="remove"]');
+          removeBtn.addEventListener("click", async () => {
+            if (
+              !confirm(
+                "Remove your " +
+                  PROVIDER_NAMES[key] +
+                  " key? You'll need to reconnect it to see " +
+                  PROVIDER_NAMES[key] +
+                  " data again.",
+              )
+            )
+              return;
+            menu.hidden = true;
+            removeBtn.disabled = true;
+            removeBtn.querySelector("span").textContent = "Removing…";
+            try {
+              const res = await fetch("/remove-key", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ provider: key }),
+              });
+              if (!res.ok) throw new Error("remove-key failed");
+              // Same cache-clearing as the setup flow's proceed() — the provider mix just
+              // changed, so any cached totals or dismissed nudges from before are stale.
+              try {
+                Object.keys(sessionStorage)
+                  .filter((k) => k.indexOf("atsCache:v1:") === 0)
+                  .forEach((k) => sessionStorage.removeItem(k));
+              } catch (e) {
+                // sessionStorage unavailable — nothing to clear
+              }
+              try {
+                Object.keys(localStorage)
+                  .filter((k) => k.indexOf("atsDismissedConnectBanner:v1:") === 0)
+                  .forEach((k) => localStorage.removeItem(k));
+              } catch (e) {
+                // localStorage unavailable — nothing to clear
+              }
+              setTimeout(() => location.reload(), 1200);
+            } catch (e) {
+              alert("Could not remove the key — try again.");
+              removeBtn.disabled = false;
+              removeBtn.querySelector("span").textContent = "Remove key";
+            }
+          });
+        });
+
+        document.addEventListener("click", closeAllMenus);
+      })();
     </script>
   </body>
 </html>

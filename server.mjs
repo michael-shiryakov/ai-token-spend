@@ -7,10 +7,10 @@
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { extname, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { isSea, getAsset } from "node:sea";
 
 // Directory this app's own files (and its config file, if any) live in — the project
@@ -30,6 +30,62 @@ function resolveRoot() {
   return bundleMatch ? dirname(bundleMatch[1]) : execDir;
 }
 const ROOT = resolveRoot();
+
+// Single-instance lock. Every relaunch (see writeConfigAndRelaunch) exits the old process
+// right after spawning its replacement — fine while it's still your terminal's current
+// foreground job, but the replacement isn't, so a later Ctrl+C (or just closing the
+// terminal/browser tab without stopping it first) can't reach it. Left alone, each
+// forgotten instance keeps its port forever and the next `npm start` just falls back to the
+// next one, piling up over a dev session. This file records whichever process last actually
+// bound the port; startup uses it to stop that one first, so the port is always free again.
+const PID_FILE = join(ROOT, ".server.pid");
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Best-effort sanity check before signaling a PID we didn't just spawn ourselves — makes
+// sure a stale pidfile is still pointing at one of our own server processes, not some
+// unrelated one that happens to have reused the PID since. `ps` isn't available on Windows;
+// failing to confirm there just falls back to trusting the pidfile (it's ours, written only
+// by this app, so the risk of a stale collision is low).
+function looksLikeOurServer(pid) {
+  try {
+    return execFileSync("ps", ["-o", "command=", "-p", String(pid)], {
+      encoding: "utf8",
+    }).includes("server.mjs");
+  } catch {
+    return true;
+  }
+}
+
+async function killStalePreviousInstance() {
+  if (!existsSync(PID_FILE)) return;
+  const pid = parseInt(readFileSync(PID_FILE, "utf8").trim(), 10);
+  if (!pid || pid === process.pid) return;
+  if (!isProcessAlive(pid) || !looksLikeOurServer(pid)) return;
+  console.warn(`Stopping a previous instance of this app still running (pid ${pid})...`);
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  for (let i = 0; i < 20 && isProcessAlive(pid); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (isProcessAlive(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+}
 
 // Packaged (double-click) builds have no --env-file flag to rely on, so also look for a
 // plain KEY=value config file sitting next to the app (ROOT, above) — this is what the
@@ -56,6 +112,14 @@ const KEY = process.env.ANTHROPIC_ADMIN_KEY;
 const ANTHROPIC_ENABLED = Boolean(KEY);
 const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY;
 const OPENAI_ENABLED = Boolean(OPENAI_KEY);
+
+// Shared with the client-side copy inside SETUP_CLIENT_SCRIPT (that one masks what the user
+// just typed, before it's ever sent anywhere; this one masks an already-saved key server-side
+// before it's embedded in the dashboard page — the real value must never reach the browser).
+function maskKey(key) {
+  if (key.length <= 17) return "••••••••" + key.slice(-4);
+  return key.slice(0, 13) + "••••••••" + key.slice(-4);
+}
 
 // Rather than exiting, an unconfigured packaged build serves a setup page until at least one
 // key is saved — a non-technical user double-clicking an app has no terminal to read an error
@@ -1916,20 +1980,31 @@ async function loadIndexHtml() {
   const html = isSea()
     ? getAsset("index.html", "utf8")
     : await readFile(join(ROOT, "index.html"), "utf8");
+  const inject = [];
   // Only ever true for the demo build (see build-mac-demo.sh) — real builds serve this file
   // byte-for-byte unchanged. index.html reads this flag to show a persistent "Demo — sample
   // data" badge so mock data is never mistaken for a real connected account.
-  if (!MOCK_MODE) return html;
-  return html.replace(
-    "</head>",
-    "<script>window.__ATS_MOCK_MODE__=true;</script></head>",
-  );
+  if (MOCK_MODE) inject.push("window.__ATS_MOCK_MODE__=true;");
+  // The header's per-provider status chips need to know what's actually connected — never
+  // the real key, only whether one exists and its masked form (see maskKey above).
+  const providers = JSON.stringify({
+    anthropic: { connected: ANTHROPIC_ENABLED, masked: ANTHROPIC_ENABLED ? maskKey(KEY) : null },
+    openai: { connected: OPENAI_ENABLED, masked: OPENAI_ENABLED ? maskKey(OPENAI_KEY) : null },
+  }).replace(/</g, "\\u003c");
+  inject.push(`window.__ATS_PROVIDERS__=${providers};`);
+  return html.replace("</head>", `<script>${inject.join("")}</script></head>`);
 }
 
 async function serveStatic(req, res, pathname) {
   if (pathname === "/" || pathname === "/index.html") {
     const content = await loadIndexHtml();
-    res.writeHead(200, { "Content-Type": "text/html" });
+    // This page's content varies per request now (window.__ATS_PROVIDERS__ reflects
+    // whatever's currently connected) — without this, a bare reload after adding/changing/
+    // removing a key could show a browser-cached copy with the old provider state baked in.
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      "Cache-Control": "no-store",
+    });
     return res.end(content);
   }
   // The dashboard is a single self-contained index.html with no other static assets, so a
@@ -2072,6 +2147,27 @@ export function setupPageCopy(mode) {
         "Add Anthropic to see combined AI cost and usage across both providers, plus Claude adoption tracking.",
       cards: ["anthropic"],
       buttonLabel: "Add Anthropic",
+    };
+  }
+  // Reached from the dashboard header's "Change key" action (see setupPageHtml's
+  // ?provider= handling) — same single-card layout as "add-*" above, but the provider is
+  // already connected, so the copy and button read as an update rather than a first connect.
+  if (mode === "change-anthropic") {
+    return {
+      title: "Change your Anthropic key",
+      subtitle:
+        "Paste a new Admin API key to replace the one currently connected.",
+      cards: ["anthropic"],
+      buttonLabel: "Save key",
+    };
+  }
+  if (mode === "change-openai") {
+    return {
+      title: "Change your OpenAI key",
+      subtitle:
+        "Paste a new Admin API key to replace the one currently connected.",
+      cards: ["openai"],
+      buttonLabel: "Save key",
     };
   }
   return {
@@ -3017,13 +3113,17 @@ function onboardingGuideHtml() {
 </html>`;
 }
 
-function setupPageHtml() {
+function setupPageHtml(changeProvider) {
   const mode =
-    ANTHROPIC_ENABLED && !OPENAI_ENABLED
-      ? "add-openai"
-      : !ANTHROPIC_ENABLED && OPENAI_ENABLED
-        ? "add-anthropic"
-        : "setup";
+    changeProvider === "anthropic"
+      ? "change-anthropic"
+      : changeProvider === "openai"
+        ? "change-openai"
+        : ANTHROPIC_ENABLED && !OPENAI_ENABLED
+          ? "add-openai"
+          : !ANTHROPIC_ENABLED && OPENAI_ENABLED
+            ? "add-anthropic"
+            : "setup";
   const pageCopy = setupPageCopy(mode);
   const providersJson = JSON.stringify(PROVIDER_COPY).replace(/</g, "\\u003c");
   const pageJson = JSON.stringify(pageCopy).replace(/</g, "\\u003c");
@@ -3138,7 +3238,10 @@ function setupPageHtml() {
     ${
       mode === "setup"
         ? '<a href="/" class="back-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;display:block"><path d="M15 6l-6 6 6 6"/></svg>Back to guide</a>'
-        : ""
+        // "add-*"/"change-*" modes are only ever reached from an already-running dashboard
+        // (the connect-provider nudge, or the header's "Change key" action) — without this,
+        // changing your mind here means falling back to the browser's own back button.
+        : '<a href="/" class="back-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;display:block"><path d="M15 6l-6 6 6 6"/></svg>Back to dashboard</a>'
     }
   </div>
   <div class="page-wrap">
@@ -3269,6 +3372,50 @@ export function resolveKeysToPersist({
   };
 }
 
+// Writes .env with whichever keys are still truthy (deleting the file entirely if none are
+// — same on-disk state as a fresh clone, so SETUP_MODE picks it back up naturally), then
+// relaunches so the freshly-written config loads cleanly instead of trying to hot-swap the
+// KEY/HEADERS constants already baked in at module load. Used by both handleSetup (saving a
+// new/changed key) and handleRemoveKey (dropping one).
+function writeConfigAndRelaunch(res, anthropicKey, openaiKey) {
+  const lines = [];
+  if (anthropicKey) lines.push(`ANTHROPIC_ADMIN_KEY=${anthropicKey}`);
+  if (openaiKey) lines.push(`OPENAI_ADMIN_KEY=${openaiKey}`);
+  const configPath = join(ROOT, ".env");
+  if (lines.length) writeFileSync(configPath, lines.join("\n") + "\n");
+  else if (existsSync(configPath)) unlinkSync(configPath);
+  sendJson(res, 200, { ok: true });
+  // setTimeout gives the response above time to actually flush to the client before this
+  // process exits.
+  setTimeout(() => {
+    const relaunchArgs = isSea()
+      ? []
+      : process.execArgv.concat(process.argv.slice(1));
+    // spawn() without an explicit env inherits this whole process's current process.env —
+    // including the OLD ANTHROPIC_ADMIN_KEY/OPENAI_ADMIN_KEY already loaded in memory. A
+    // changed or removed key wouldn't take effect in the relaunched process without this:
+    // node's own --env-file-if-exists can't "unset" a key that's no longer in .env, and
+    // loadExternalConfig() above explicitly skips a var that's already present in
+    // process.env — so the stale inherited value would silently survive either way. Strip
+    // both here so the relaunched process picks them up fresh, exclusively from the
+    // just-written .env.
+    const relaunchEnv = { ...process.env };
+    delete relaunchEnv.ANTHROPIC_ADMIN_KEY;
+    delete relaunchEnv.OPENAI_ADMIN_KEY;
+    // Only detach for the packaged .app build, where there's no terminal/parent process to
+    // begin with. In terminal use (npm start / npm run demo) detaching would move the
+    // relaunched process into its own process group, putting it out of reach of the
+    // terminal's own Ctrl+C — inherit stdio and stay in the same group instead, so it
+    // behaves like any other Node dev server.
+    spawn(process.execPath, relaunchArgs, {
+      detached: isSea(),
+      stdio: isSea() ? "ignore" : "inherit",
+      env: relaunchEnv,
+    }).unref();
+    process.exit(0);
+  }, 200);
+}
+
 async function handleSetup(req, res) {
   let body = "";
   for await (const chunk of req) body += chunk;
@@ -3306,29 +3453,27 @@ async function handleSetup(req, res) {
     existingAnthropicKey: KEY,
     existingOpenaiKey: OPENAI_KEY,
   });
-  const lines = [];
-  if (finalAnthropicKey) lines.push(`ANTHROPIC_ADMIN_KEY=${finalAnthropicKey}`);
-  if (finalOpenaiKey) lines.push(`OPENAI_ADMIN_KEY=${finalOpenaiKey}`);
-  writeFileSync(join(ROOT, ".env"), lines.join("\n") + "\n");
-  sendJson(res, 200, { ok: true });
-  // Relaunch so the freshly-written config loads cleanly instead of trying to hot-swap the
-  // KEY/HEADERS constants already baked in at module load. setTimeout gives the response
-  // above time to actually flush to the client before this process exits.
-  setTimeout(() => {
-    const relaunchArgs = isSea()
-      ? []
-      : process.execArgv.concat(process.argv.slice(1));
-    // Only detach for the packaged .app build, where there's no terminal/parent process to
-    // begin with. In terminal use (npm start / npm run demo) detaching would move the
-    // relaunched process into its own process group, putting it out of reach of the
-    // terminal's own Ctrl+C — inherit stdio and stay in the same group instead, so it
-    // behaves like any other Node dev server.
-    spawn(process.execPath, relaunchArgs, {
-      detached: isSea(),
-      stdio: isSea() ? "ignore" : "inherit",
-    }).unref();
-    process.exit(0);
-  }, 200);
+  writeConfigAndRelaunch(res, finalAnthropicKey, finalOpenaiKey);
+}
+
+async function handleRemoveKey(req, res) {
+  let body = "";
+  for await (const chunk of req) body += chunk;
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return sendJson(res, 400, { error: "Invalid request body" });
+  }
+  const provider = payload.provider;
+  if (provider !== "anthropic" && provider !== "openai") {
+    return sendJson(res, 400, { error: "Unknown provider" });
+  }
+  writeConfigAndRelaunch(
+    res,
+    provider === "anthropic" ? "" : KEY,
+    provider === "openai" ? "" : OPENAI_KEY,
+  );
 }
 const server = createServer(async (req, res) => {
   try {
@@ -3337,21 +3482,32 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true });
       return setTimeout(shutdown, 200);
     }
-    // /setup, /verify-key, and /connect are NOT gated on SETUP_MODE — a live dashboard
-    // running on just one provider needs to be able to add the other one without a full
-    // reset, not just during first-run setup.
+    // /setup, /verify-key, /remove-key, and /connect are NOT gated on SETUP_MODE — a live
+    // dashboard running on just one provider needs to be able to add, change, or remove a
+    // key without a full reset, not just during first-run setup.
     if (req.method === "POST" && url.pathname === "/setup")
       return await handleSetup(req, res);
     if (req.method === "POST" && url.pathname === "/verify-key")
       return await handleVerifyKey(req, res);
+    if (req.method === "POST" && url.pathname === "/remove-key")
+      return await handleRemoveKey(req, res);
     if (url.pathname === "/connect") {
-      if (ANTHROPIC_ENABLED && OPENAI_ENABLED) {
-        // Both already configured — nothing left to add.
+      // ?provider=X (from the dashboard's "Change key" action) explicitly targets an
+      // already-connected provider's card, which otherwise wouldn't be reachable here —
+      // without it, this route only ever shows whichever provider ISN'T connected yet.
+      const requestedProvider = url.searchParams.get("provider");
+      const changeProvider =
+        (requestedProvider === "anthropic" && ANTHROPIC_ENABLED) ||
+        (requestedProvider === "openai" && OPENAI_ENABLED)
+          ? requestedProvider
+          : null;
+      if (!changeProvider && ANTHROPIC_ENABLED && OPENAI_ENABLED) {
+        // Both already configured and no specific one was asked for — nothing left to add.
         res.writeHead(302, { Location: "/" });
         return res.end();
       }
       res.writeHead(200, { "Content-Type": "text/html" });
-      return res.end(setupPageHtml());
+      return res.end(setupPageHtml(changeProvider));
     }
     if (SETUP_MODE) {
       // The onboarding guide (intro + "get to know your spend" + "get clear on your data")
@@ -3402,6 +3558,7 @@ function listenWithFallback(port, attemptsLeft) {
   // so it would still fire (logging the wrong port) once a later retry actually succeeds.
   const onListening = () => {
     server.removeListener("error", onError);
+    writeFileSync(PID_FILE, String(process.pid));
     console.log(`AI token spend dashboard running at http://localhost:${port}`);
     // Packaged builds are launched by double-clicking, with no terminal to read this URL
     // from — dev mode (npm start) is unaffected, so re-running the dev server repeatedly
@@ -3434,9 +3591,16 @@ function listenWithFallback(port, attemptsLeft) {
 
 // A packaged app has no menu bar/Cmd+Q of its own — the polite "Quit" Apple Event the Dock
 // sends isn't something a bare Node process understands, so without this, only Force Quit
-// (which skips straight to SIGKILL) actually stops it. Handling SIGTERM covers that, and
-// the dashboard's own Quit button (see index.html) hits /quit for a normal in-app way out.
+// (which skips straight to SIGKILL) actually stops it. Handling SIGTERM covers that; /quit
+// itself is also still used by reset-onboarding.sh to restart the server cleanly.
 function shutdown() {
+  try {
+    if (readFileSync(PID_FILE, "utf8").trim() === String(process.pid)) {
+      unlinkSync(PID_FILE);
+    }
+  } catch {
+    // no pidfile, or it's not ours (a newer instance already overwrote it) — leave it alone
+  }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1000).unref();
 }
@@ -3451,5 +3615,6 @@ if (isMainModule) {
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 
+  await killStalePreviousInstance();
   listenWithFallback(PORT, 9);
 }
