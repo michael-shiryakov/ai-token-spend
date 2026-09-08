@@ -1,0 +1,8 @@
+node_modules/
+.env
+.env.bak
+.env.demo-backup
+.DS_Store
+dist/
+dist-*/
+.cache/
