@@ -3318,9 +3318,14 @@ async function handleSetup(req, res) {
     const relaunchArgs = isSea()
       ? []
       : process.execArgv.concat(process.argv.slice(1));
+    // Only detach for the packaged .app build, where there's no terminal/parent process to
+    // begin with. In terminal use (npm start / npm run demo) detaching would move the
+    // relaunched process into its own process group, putting it out of reach of the
+    // terminal's own Ctrl+C — inherit stdio and stay in the same group instead, so it
+    // behaves like any other Node dev server.
     spawn(process.execPath, relaunchArgs, {
-      detached: true,
-      stdio: "ignore",
+      detached: isSea(),
+      stdio: isSea() ? "ignore" : "inherit",
     }).unref();
     process.exit(0);
   }, 200);
