@@ -15,24 +15,13 @@ A  dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no d
    cd ai-token-spend
    ```
 
-2. Copy the example env file and add your API key(s):
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   - **Anthropic**: create an Analytics API key (scope `read:analytics`) at [claude.ai/admin-settings/api-access](https://claude.ai/admin-settings/api-access). Requires Claude Enterprise.
-   - **OpenAI**: create an Admin API key at [platform.openai.com/settings/organization/admin-keys](https://platform.openai.com/settings/organization/admin-keys).
-
-   You only need to fill in the key(s) for the provider(s) you use.
-
-3. Start the app:
+2. Start the app:
 
    ```bash
    npm start
    ```
 
-4. Open [http://localhost:4173](http://localhost:4173) in your browser.
+3. Open [http://localhost:4173](http://localhost:4173) in your browser.
 
 ## Demo mode (no API keys needed)
 
