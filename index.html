@@ -102,19 +102,19 @@
       .brand {
         display: flex;
         align-items: center;
-        gap: 12px;
-        font-weight: 740;
-        letter-spacing: -0.01em;
         justify-self: start;
       }
+      /* Same wordmark asset + height as the white nav-bar's logo (server.mjs, .nav-bar svg /
+         .nav-bar-logo svg) — kept in sync so both headers' logos render at identical size. */
       .brand-mark {
-        width: 28px;
-        height: 28px;
-        border-radius: 8px;
-        display: grid;
-        place-items: center;
-        background: rgba(255, 255, 255, 0.12);
+        display: flex;
+        align-items: center;
         color: #ffffff;
+      }
+      .brand-mark svg {
+        height: 20px;
+        width: auto;
+        display: block;
       }
       .app-bar-title {
         font-weight: 740;
@@ -1088,23 +1088,7 @@
   <body>
     <header class="app-bar">
       <div class="brand">
-        <span class="brand-mark"
-          ><svg
-            width="16"
-            height="14"
-            viewBox="0 0 22 19"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            aria-hidden="true"
-          >
-            <path
-              fill-rule="evenodd"
-              clip-rule="evenodd"
-              d="M15.0631 2.07716C15.9596 1.00349 17.1784 0.332031 18.7599 0.332031H21.4022C21.5109 0.332031 21.599 0.420242 21.599 0.529056V12.6391C21.599 15.6652 19.1483 18.1184 16.1252 18.1184H13.483C13.3743 18.1184 13.2862 18.0301 13.2862 17.9213V16.5028C13.2862 16.4576 13.2301 16.436 13.1991 16.4689C12.2432 17.4863 10.9172 18.1185 9.35767 18.1185H7.19075C7.08205 18.1185 6.99393 18.0303 6.99393 17.9215V16.5456C6.99393 16.5007 6.9384 16.4789 6.90729 16.5113C5.95458 17.5037 4.64391 18.1182 3.10634 18.1182H0.696276C0.587573 18.1182 0.499451 18.03 0.499451 17.9212V9.74028C0.499451 6.71414 2.95013 4.26098 5.9732 4.26098H8.46934C9.2996 2.93461 10.6804 2.07716 12.4677 2.07716H15.0631ZM18.7599 2.30228H19.7291V12.6391C19.7291 14.577 18.0613 16.1481 16.1252 16.1481H15.2545V5.81133C15.2545 3.87333 16.8239 2.30228 18.7599 2.30228ZM13.3526 4.04741H12.4677C10.5316 4.04741 8.96218 5.61847 8.96218 7.55646V16.1482H9.35767C11.5096 16.1482 13.3526 14.402 13.3526 12.2478V4.04741ZM7.10123 6.23123H5.9732C4.03717 6.23123 2.46771 7.80228 2.46771 9.74028V16.148H3.10634C5.2583 16.148 7.10123 14.4017 7.10123 12.2476V6.23123Z"
-              fill="currentColor"
-            /></svg
-        ></span>
-        moss
+        <span class="brand-mark"><!--ICON:moss-wordmark--></span>
       </div>
       <div class="app-bar-title">AI Spend Control</div>
       <div class="app-bar-right">
@@ -2759,6 +2743,29 @@
       // out for that range instead of firing a fresh duplicate every time.
       const inFlightRequests = new Map();
 
+      // Browsers cap concurrent connections per origin (6 for HTTP/1.1) — a full 10-endpoint
+      // range load plus background prefetching of other ranges can easily saturate that,
+      // leaving a genuinely instant server-side action (/remove-key — see applyProviderKeys
+      // in server.mjs, which responds in milliseconds) stuck waiting in the *browser's own*
+      // outgoing queue for a connection slot, not the server. Every background data fetch
+      // below carries this controller's signal so a real user action that needs to jump the
+      // queue (removing/changing a key) can cancel everything in flight first — those
+      // results are about to be superseded by the key change anyway.
+      let backgroundAbortController = new AbortController();
+      // Bumped on every cancellation so a still-running prefetchOtherRanges loop (below) can
+      // tell it was cancelled out from under it and stop advancing to the next range, rather
+      // than resuming immediately with a fresh (non-aborted) controller — aborting only the
+      // in-flight requests but letting the loop march on to the next range would still end
+      // up feeding the server's shared upstream request queue (see MAX_CONCURRENT_REQUESTS
+      // in server.mjs) for several more ranges' worth of work, for data that
+      // clearStaleProviderMixState is about to throw away anyway.
+      let backgroundGeneration = 0;
+      function cancelBackgroundLoads() {
+        backgroundGeneration++;
+        backgroundAbortController.abort();
+        backgroundAbortController = new AbortController();
+      }
+
       // Each piece of the dashboard is fetched and rendered independently, as soon as its own
       // response lands, instead of waiting for every endpoint before showing anything. A
       // sessionStorage hit short-circuits straight to `apply` with no network round trip —
@@ -2784,14 +2791,16 @@
         const flightKey = `${endpoint}:${key}`;
         const request =
           inFlightRequests.get(flightKey) ||
-          fetch(url)
+          fetch(url, { signal: backgroundAbortController.signal })
             .then((res) => res.json())
             .then((data) => {
               writeRangeCache(endpoint, key, data);
               return data;
             })
             .catch((err) => {
-              console.error(err);
+              // AbortError means cancelBackgroundLoads() deliberately killed this fetch to
+              // free up a connection slot for something more urgent — not a real failure.
+              if (err?.name !== "AbortError") console.error(err);
               return undefined; // fall back to each render function's built-in "no data" state
             })
             .finally(() => {
@@ -2958,7 +2967,12 @@
       // burst the Admin API's rate limit), so switching periods is instant once this settles.
       // Safe to call on every page load — already-cached ranges resolve to no-op network calls.
       async function prefetchOtherRanges() {
+        const generation = backgroundGeneration;
         for (const days of PRESET_RANGES) {
+          // A key was added/changed/removed mid-prefetch (see cancelBackgroundLoads) —
+          // whatever this loop would fetch next is for a provider mix that's already gone,
+          // and clearStaleProviderMixState already wiped the cache it would write into.
+          if (generation !== backgroundGeneration) return;
           const key = String(days);
           if (key === currentRangeKey()) continue;
           await Promise.allSettled(loadRangeData(key, `days=${days}`));
@@ -4380,6 +4394,111 @@
       // connected provider. window.__ATS_PROVIDERS__ (see server.mjs's loadIndexHtml) is the
       // authoritative connected/masked state — not derived from spend data, since a
       // genuinely-connected provider can still have $0 spend in the selected range.
+      //
+      // Removing a provider can only ever SUBTRACT from data already sitting in `state` —
+      // no new number a fresh fetch could reveal — so this recomputes every already-loaded
+      // piece of state in place instead of re-fetching anything. Most endpoints are
+      // single-provider-exclusive (seats/efficiency/segments/tool-acceptance/skills/
+      // efficiency-by-model/teams are Anthropic-only, openai-projects is OpenAI-only — see
+      // HANDOFF.md's "hard API constraints"), so those just clear to the same "no data"
+      // shape every render function here already tolerates (see the "Anthropic made fully
+      // optional" work). Only cost-summary and people genuinely blend both providers'
+      // numbers together and need a real subtraction rather than a plain clear.
+      function dropProviderFromLoadedState(provider) {
+        const isAnthropic = provider === "anthropic";
+        const providerName = isAnthropic ? "Anthropic" : "OpenAI";
+
+        if (state.cost) {
+          const c = state.cost;
+          const byProvider = c.byProvider ?? [];
+          const entry = byProvider.find((p) => p.name === providerName);
+          const removedSpend = entry ? entry.totalSpend : 0;
+          const removedRequests = entry ? entry.totalRequests : 0;
+          if (entry) {
+            entry.spend = entry.spend.map(() => 0);
+            entry.requests = entry.requests.map(() => 0);
+            entry.totalSpend = 0;
+            entry.totalRequests = 0;
+          }
+          if (c.totals) {
+            c.totals.spend -= removedSpend;
+            c.totals.requests -= removedRequests;
+            if (isAnthropic) c.totals.anthropicSpend = 0;
+            else c.totals.openaiSpend = 0;
+            if (c.totals.previous) {
+              const removedPrevSpend = isAnthropic
+                ? c.totals.previous.anthropicSpend
+                : c.totals.previous.openaiSpend;
+              c.totals.previous.spend -= removedPrevSpend ?? 0;
+              if (isAnthropic) c.totals.previous.anthropicSpend = 0;
+              else c.totals.previous.openaiSpend = 0;
+              // The previous period's request count was never split per-provider in the
+              // response (unlike spend) — no way to un-mix it here, so drop the comparison
+              // rather than show a misleading delta against a number that still silently
+              // includes the just-removed provider.
+              c.totals.previous.requests = null;
+            }
+          }
+          if (isAnthropic) {
+            // byProduct/byModel/byContextWindow/savings are Anthropic-only (see
+            // HANDOFF.md) — removing OpenAI never touches them; removing Anthropic empties
+            // them entirely, same as a fresh Anthropic-disabled fetch would.
+            c.byProduct = [];
+            c.byModel = [];
+            c.byContextWindow = [];
+            if (c.totals) c.totals.savings = 0;
+            if (c.totals?.previous) c.totals.previous.savings = 0;
+          }
+        }
+
+        if (state.people) {
+          state.people = state.people
+            .map((p) => {
+              const anthropicAmount = isAnthropic ? 0 : p.anthropicAmount;
+              const openaiAmount = isAnthropic ? p.openaiAmount : 0;
+              return {
+                ...p,
+                anthropicAmount,
+                openaiAmount,
+                amount: anthropicAmount + openaiAmount,
+                // requests came exclusively from Anthropic's per-user cost report —
+                // meaningless once Anthropic's gone, unaffected if OpenAI's removed instead.
+                requests: isAnthropic ? 0 : p.requests,
+                // Same "can't un-mix an already-combined number" reasoning as
+                // totals.previous.requests above — this was already summed server-side.
+                previousAmount: null,
+              };
+            })
+            .filter((p) => p.amount > 0)
+            .sort((a, b) => b.amount - a.amount);
+        }
+
+        // Every other endpoint is exclusively backed by one provider — clearing to null
+        // matches exactly what a fresh fetch would return with that provider disabled, and
+        // every render function here already handles a null/missing piece of state.
+        if (isAnthropic) {
+          state.seats =
+            state.efficiency =
+            state.segments =
+            state.toolAcceptance =
+            state.skills =
+            state.efficiencyByModel =
+            state.teams =
+            state.teamSeries =
+              null;
+        } else {
+          state.openaiProjects = null;
+        }
+
+        // Re-cache the corrected data for the range currently on screen so switching away
+        // and back within this session doesn't need a network round trip either — every
+        // OTHER cached range still holds the old (both-providers) numbers and was already
+        // cleared by clearStaleProviderMixState, same as before this change.
+        const key = currentRangeKey();
+        if (state.cost) writeRangeCache("cost-summary", key, state.cost);
+        if (state.people) writeRangeCache("people", key, { people: state.people });
+      }
+
       (function initProviderChips() {
         const PROVIDER_NAMES = { anthropic: "Anthropic", openai: "OpenAI" };
         const CHEVRON_DOWN_SVG =
@@ -4444,21 +4563,6 @@
           }
         }
 
-        // A fixed delay here used to gamble on the relaunch (a whole new OS process — see
-        // writeConfigAndRelaunch in server.mjs) being ready by the time it fired; on a slow
-        // machine or a busy port-fallback it sometimes wasn't. Poll for the new process to
-        // actually answer instead of guessing.
-        async function waitForServer(attempt = 0) {
-          await new Promise((r) => setTimeout(r, 300));
-          try {
-            const check = await fetch("/", { method: "HEAD", cache: "no-store" });
-            if (check.ok || attempt >= 30) return;
-          } catch (e) {
-            if (attempt >= 30) return;
-          }
-          return waitForServer(attempt + 1);
-        }
-
         ["anthropic", "openai"].forEach((key) => {
           const chip = document.getElementById("providerChip-" + key);
           const btn = document.getElementById("providerChipBtn-" + key);
@@ -4497,6 +4601,11 @@
             menu.hidden = true;
             removeBtn.disabled = true;
             removeBtn.querySelector("span").textContent = "Removing…";
+            // See cancelBackgroundLoads above: frees up the browser's own per-origin
+            // connection slots (not a server-side delay — applyProviderKeys in server.mjs
+            // already responds in milliseconds) so this POST doesn't sit queued behind a
+            // full range load or background prefetch that's still in flight.
+            cancelBackgroundLoads();
             try {
               const res = await fetch("/remove-key", {
                 method: "POST",
@@ -4507,17 +4616,42 @@
               clearStaleProviderMixState();
               const otherKey = key === "anthropic" ? "openai" : "anthropic";
               const anotherProviderRemains = providerInfo(otherKey).connected;
-              await waitForServer();
+              // /remove-key applies the change to the running server synchronously (see
+              // applyProviderKeys in server.mjs) before responding, so there's no relaunch
+              // to wait for — safe to act on the new state immediately.
               if (anotherProviderRemains) {
-                // Still have data to show — update this chip and quietly re-fetch the
-                // current view in place (same path a date-range switch already uses)
-                // instead of a full page reload that resets the whole dashboard shell.
+                // Still have data to show. Removing a provider can only subtract from
+                // numbers already sitting in `state` from the last load — nothing a fresh
+                // fetch could add — so recompute in place instead of hitting the network
+                // again; see dropProviderFromLoadedState above for the full reasoning.
                 window.__ATS_PROVIDERS__ = window.__ATS_PROVIDERS__ || {};
                 window.__ATS_PROVIDERS__[key] = { connected: false, masked: null };
                 renderChip(key);
                 removeBtn.disabled = false;
                 removeBtn.querySelector("span").textContent = "Remove key";
-                if (typeof loadData === "function") loadData();
+                if (state.cost) {
+                  dropProviderFromLoadedState(key);
+                  renderKpis();
+                  renderChart();
+                  renderProductsSpend();
+                  renderModelsSpend();
+                  renderOverviewChart();
+                  renderInvestigation();
+                  updateConnectionStatus(state.cost.totals);
+                  renderConnectNudge(state.cost.totals);
+                  renderPeople();
+                  renderToolAcceptance();
+                  renderSkills();
+                  renderModelCaching();
+                  renderTeams();
+                  renderOpenAiProjects();
+                } else {
+                  // Nothing loaded yet to subtract from (e.g. removed right as the page was
+                  // still loading, before cancelBackgroundLoads above could even deliver a
+                  // first real response) — nothing to reuse, so this one case does need a
+                  // real fetch.
+                  loadData();
+                }
               } else {
                 // Nothing left connected — there's no dashboard to render in place
                 // anymore, so this really does need the fresh onboarding page.

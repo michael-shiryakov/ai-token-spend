@@ -31,13 +31,69 @@ function resolveRoot() {
 }
 const ROOT = resolveRoot();
 
-// Single-instance lock. Every relaunch (see writeConfigAndRelaunch) exits the old process
-// right after spawning its replacement — fine while it's still your terminal's current
-// foreground job, but the replacement isn't, so a later Ctrl+C (or just closing the
-// terminal/browser tab without stopping it first) can't reach it. Left alone, each
-// forgotten instance keeps its port forever and the next `npm start` just falls back to the
-// next one, piling up over a dev session. This file records whichever process last actually
-// bound the port; startup uses it to stop that one first, so the port is always free again.
+// Icons used to be hand-flattened SVG strings baked directly into the ICONS maps below and
+// into index.html itself — hard to browse or tweak as one-line strings buried in a huge
+// file. Now sourced from real files under assets/icons/ instead, read once at startup (same
+// "server.mjs needs a restart to see changes" rule as everything else in this file — only
+// index.html itself is re-read fresh per request). Read from disk unconditionally, never
+// from a SEA asset — there's no packaging pipeline in this repo (see HANDOFF.md), so a
+// packaged build isn't a concern today; if one gets added back, assets/icons/ would need
+// bundling too, the same way index.html already is.
+const ICONS_DIR = join(ROOT, "assets", "icons");
+function readIconFile(name) {
+  return readFileSync(join(ICONS_DIR, `${name}.svg`), "utf8");
+}
+
+// Normalizes a plain single-color icon as downloaded from an icon site (hardcoded black/
+// white fill or stroke, arbitrary pixel width/height, XML prolog/attribution comments/title/
+// desc cruft) into this app's own convention: 1em-sized so a wrapping span's font-size
+// controls scale, and currentColor so it inherits whatever button/text color surrounds it —
+// matching every hand-authored icon already in the ICONS maps below.
+function monochromeIconSvg(name) {
+  return readIconFile(name)
+    .replace(/<\?xml[^>]*\?>/, "")
+    .replace(/<!--[^]*?-->/g, "")
+    .replace(/<title>[^]*?<\/title>/g, "")
+    .replace(/<desc>[^]*?<\/desc>/g, "")
+    .replace(/<defs>[^]*?<\/defs>/g, "")
+    .replace(/\swidth="[^"]*"/, ' width="1em"')
+    .replace(/\sheight="[^"]*"/, ' height="1em"')
+    .replace(/(fill|stroke)="#[0-9a-fA-F]+"/g, '$1="currentColor"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// The source file draws the key lying flat/horizontal — the app has always shown it tilted
+// (teeth pointing down-left, as if about to unlock something), via this same -35deg rotation
+// around the file's own bow-of-the-key coordinates.
+const KEY_ICON_SVG = monochromeIconSvg("key").replace(
+  /^(<svg[^>]*>)([\s\S]*)(<\/svg>)$/,
+  '$1<g transform="rotate(-35 9 16)">$2</g>$3'
+);
+const SEND_ICON_SVG = monochromeIconSvg("paper-plane");
+const REPEAT_ICON_SVG = monochromeIconSvg("rotate");
+const TEAMS_ICON_SVG = monochromeIconSvg("users");
+const DOLLAR_ICON_SVG = monochromeIconSvg("dollar");
+const OPENAI_LOGO_SVG = monochromeIconSvg("openai-light");
+// Anthropic's mark keeps its real brand orange rather than currentColor — unlike the
+// monochrome UI icons above, this one's color is the point, not something that should ever
+// inherit surrounding text color.
+const ANTHROPIC_LOGO_SVG = readIconFile("anthropic")
+  .replace(/<\?xml[^>]*\?>/, "")
+  .replace(/\swidth="[^"]*"/, ' width="1em"')
+  .replace(/\sheight="[^"]*"/, ' height="1em"')
+  .replace(/\s+/g, " ")
+  .trim();
+
+const MOSS_LOGO_SOURCE_SVG = readIconFile("moss-logo-v2");
+
+// Single-instance lock. Add/change/remove key no longer relaunches the process (see
+// applyProviderKeys), so this mainly guards a simpler case now: a previous session's
+// `npm start` left running (terminal/tab closed without stopping it first) still squatting
+// the port. Left alone, each forgotten instance keeps its port forever and the next
+// `npm start` just falls back to the next one, piling up over time. This file records
+// whichever process last actually bound the port; startup uses it to stop that one first,
+// so the port is always free again.
 const PID_FILE = join(ROOT, ".server.pid");
 
 function isProcessAlive(pid) {
@@ -108,10 +164,13 @@ loadExternalConfig();
 
 // Either provider key works on its own, or both together — the dashboard degrades to
 // showing just the connected provider(s)' data rather than requiring a specific one.
-const KEY = process.env.ANTHROPIC_ADMIN_KEY;
-const ANTHROPIC_ENABLED = Boolean(KEY);
-const OPENAI_KEY = process.env.OPENAI_ADMIN_KEY;
-const OPENAI_ENABLED = Boolean(OPENAI_KEY);
+// Mutable, not const: applyProviderKeys (below) updates these in place when a key is
+// added/changed/removed, so the running process picks up the change immediately instead of
+// needing a relaunch (see applyProviderKeys for the full reasoning).
+let KEY = process.env.ANTHROPIC_ADMIN_KEY;
+let ANTHROPIC_ENABLED = Boolean(KEY);
+let OPENAI_KEY = process.env.OPENAI_ADMIN_KEY;
+let OPENAI_ENABLED = Boolean(OPENAI_KEY);
 
 // Shared with the client-side copy inside SETUP_CLIENT_SCRIPT (that one masks what the user
 // just typed, before it's ever sent anywhere; this one masks an already-saved key server-side
@@ -123,9 +182,13 @@ function maskKey(key) {
 
 // Rather than exiting, an unconfigured packaged build serves a setup page until at least one
 // key is saved — a non-technical user double-clicking an app has no terminal to read an error
-// in.
-const SETUP_MODE = !ANTHROPIC_ENABLED && !OPENAI_ENABLED;
-if (SETUP_MODE) {
+// in. A function, not a frozen boolean, since ANTHROPIC_ENABLED/OPENAI_ENABLED can now change
+// live (see applyProviderKeys) without a relaunch — a cached boolean would go stale the first
+// time a key is added or removed.
+function isSetupMode() {
+  return !ANTHROPIC_ENABLED && !OPENAI_ENABLED;
+}
+if (isSetupMode()) {
   console.warn(
     "No API keys configured — serving the setup page until at least one is saved.",
   );
@@ -141,9 +204,46 @@ if (SETUP_MODE) {
 
 const PORT = Number(process.env.PORT) || 4173;
 const API_BASE = "https://api.anthropic.com/v1/organizations/analytics";
-const HEADERS = { "x-api-key": KEY, "anthropic-version": "2023-06-01" };
+// Mutable like KEY/OPENAI_KEY above — reassigned by applyProviderKeys. Safe as default
+// parameter values elsewhere (`headers = HEADERS`) because JS evaluates default parameters
+// at call time, re-reading whatever HEADERS currently holds rather than freezing it at the
+// callee's definition time.
+let HEADERS = { "x-api-key": KEY, "anthropic-version": "2023-06-01" };
 const OPENAI_API_BASE = "https://api.openai.com/v1/organization";
-const OPENAI_HEADERS = { Authorization: `Bearer ${OPENAI_KEY}` };
+let OPENAI_HEADERS = { Authorization: `Bearer ${OPENAI_KEY}` };
+
+// Applies a new set of provider keys to the *running* process — no relaunch. Used by both
+// handleSetup (add/change a key) and handleRemoveKey (drop one). Older versions of this app
+// wrote .env and then spawned a whole fresh process, because KEY/OPENAI_KEY/ANTHROPIC_ENABLED
+// /OPENAI_ENABLED/HEADERS/OPENAI_HEADERS were frozen consts computed once at module load —
+// that relaunch (OS process spawn + the single-instance pidfile-kill dance the new process
+// ran on its own startup + the client polling HEAD / until it answered) was the actual source
+// of "remove key" sometimes taking several seconds: a real process restart's timing varies,
+// a synchronous variable reassignment's doesn't. Now .env is purely a cold-boot bootstrap
+// file — read once at startup (loadExternalConfig, above) and written here so the *next* cold
+// start picks up the change, but never read back while this process keeps running.
+function applyProviderKeys(anthropicKey, openaiKey) {
+  KEY = anthropicKey || "";
+  OPENAI_KEY = openaiKey || "";
+  ANTHROPIC_ENABLED = Boolean(KEY);
+  OPENAI_ENABLED = Boolean(OPENAI_KEY);
+  HEADERS = { "x-api-key": KEY, "anthropic-version": "2023-06-01" };
+  OPENAI_HEADERS = { Authorization: `Bearer ${OPENAI_KEY}` };
+
+  const lines = [];
+  if (KEY) lines.push(`ANTHROPIC_ADMIN_KEY=${KEY}`);
+  if (OPENAI_KEY) lines.push(`OPENAI_ADMIN_KEY=${OPENAI_KEY}`);
+  const configPath = join(ROOT, ".env");
+  // Synchronous and immediate, not deferred to "later" — a few bytes to a local file is
+  // effectively instant, and doing it synchronously means two overlapping requests can't
+  // interleave two partial writes (Node can't preempt this function mid-execution).
+  if (lines.length) writeFileSync(configPath, lines.join("\n") + "\n");
+  else if (existsSync(configPath)) unlinkSync(configPath);
+  console.log(
+    `.env updated: anthropic=${KEY ? "yes" : "no"}, openai=${OPENAI_KEY ? "yes" : "no"}`,
+  );
+}
+
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MIME = {
   ".html": "text/html",
@@ -1992,7 +2092,15 @@ async function loadIndexHtml() {
     openai: { connected: OPENAI_ENABLED, masked: OPENAI_ENABLED ? maskKey(OPENAI_KEY) : null },
   }).replace(/</g, "\\u003c");
   inject.push(`window.__ATS_PROVIDERS__=${providers};`);
-  return html.replace("</head>", `<script>${inject.join("")}</script></head>`);
+  const withInject = html.replace("</head>", `<script>${inject.join("")}</script></head>`);
+  // Same wordmark asset (icon + "moss" letters, one vector graphic) the white nav-bar
+  // (setupPageHtml/onboardingGuideHtml, MOSS_WORDMARK_SVG below) renders — unifies the two
+  // headers' logo to identical proportions instead of this one being a separately-sized
+  // icon-in-a-badge plus real HTML text. Left at the source file's own currentColor fill
+  // (unlike MOSS_WORDMARK_SVG, which hardcodes near-black for the white nav-bar) so it
+  // inherits .app-bar's white text color; sized via CSS (.brand-mark svg), not baked-in
+  // width/height attributes — see the <!--ICON:moss-wordmark--> placeholder above.
+  return withInject.replace("<!--ICON:moss-wordmark-->", MOSS_LOGO_SOURCE_SVG);
 }
 
 async function serveStatic(req, res, pathname) {
@@ -2184,8 +2292,8 @@ const SETUP_CLIENT_SCRIPT = `
     const PAGE = JSON.parse(document.getElementById('page-data').textContent);
 
     const ICONS = {
-      key: '<svg viewBox="-7 0 32 32" fill="currentColor" width="1em" height="1em"><g transform="rotate(-35 9 16)"><path d="M4.28 20.28c-2.36 0-4.28-1.92-4.28-4.28s1.92-4.28 4.28-4.28c1.48 0 2.88 0.8 3.64 2.040h8c1.24 0 2.28 1 2.28 2.28 0 1.24-1 2.28-2.28 2.28-0.080 0-0.28 0.12-0.44 0.24-0.32 0.2-0.76 0.48-1.36 0.48s-1.040-0.28-1.36-0.48c-0.16-0.12-0.36-0.24-0.44-0.24s-0.28 0.12-0.44 0.24c-0.32 0.2-0.76 0.48-1.36 0.48s-1.040-0.28-1.36-0.48c-0.16-0.12-0.36-0.24-0.44-0.24h-0.8c-0.76 1.2-2.12 1.96-3.64 1.96zM4.28 13.36c-1.44 0-2.64 1.2-2.64 2.64s1.2 2.64 2.64 2.64c1.040 0 1.96-0.6 2.4-1.56 0.12-0.28 0.44-0.48 0.76-0.48h1.28c0.6 0 1.040 0.28 1.36 0.48 0.16 0.12 0.36 0.24 0.44 0.24s0.28-0.12 0.44-0.24c0.32-0.2 0.76-0.48 1.36-0.48s1.040 0.28 1.36 0.48c0.16 0.12 0.36 0.24 0.44 0.24s0.28-0.12 0.44-0.24c0.32-0.2 0.76-0.48 1.36-0.48 0.32 0 0.6-0.28 0.6-0.6s-0.28-0.6-0.6-0.6h-8.48c-0.32 0-0.6-0.2-0.76-0.48-0.4-0.96-1.36-1.56-2.4-1.56zM4.96 16c0 0.486-0.394 0.88-0.88 0.88s-0.88-0.394-0.88-0.88c0-0.486 0.394-0.88 0.88-0.88s0.88 0.394 0.88 0.88z"></path></g></svg>',
-      send: '<svg viewBox="0 0 24 24" fill="currentColor" width="1em" height="1em"><g transform="rotate(15 12 12)"><path d="M2.009,10.845a1,1,0,0,0,.849.859l8.258,1.18,1.18,8.258a1,1,0,0,0,1.909.252l7.714-18a1,1,0,0,0-1.313-1.313L2.606,9.8A1,1,0,0,0,2.009,10.845Zm11.762,6.483-.711-4.974,4.976-4.976Zm2.85-11.363-4.974,4.974-4.976-.71Z"></path></g></svg>',
+      key: '${KEY_ICON_SVG}',
+      send: '${SEND_ICON_SVG}',
       chevronRight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="1em" height="1em"><path d="M9 6l6 6-6 6"/></svg>',
       chevronLeft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="1em" height="1em"><path d="M15 6l-6 6 6 6"/></svg>',
       lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="1em" height="1em"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>',
@@ -2198,8 +2306,8 @@ const SETUP_CLIENT_SCRIPT = `
       externalLink: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="1em" height="1em"><path d="M9 5h10v10"/><path d="M19 5L5 19"/></svg>',
       pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="1em" height="1em"><path d="M15.5 4.5l4 4L7 21H3v-4Z"/></svg>',
       spinner: '<svg viewBox="0 0 24 24" fill="none" width="1em" height="1em"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="32 200"/></svg>',
-      anthropicLogo: '<svg viewBox="0 0 248 248" fill="none" width="1em" height="1em"><path d="M52.4285 162.873L98.7844 136.879L99.5485 134.602L98.7844 133.334H96.4921L88.7237 132.862L62.2346 132.153L39.3113 131.207L17.0249 130.026L11.4214 128.844L6.2 121.873L6.7094 118.447L11.4214 115.257L18.171 115.847L33.0711 116.911L55.485 118.447L71.6586 119.392L95.728 121.873H99.5485L100.058 120.337L98.7844 119.392L97.7656 118.447L74.5877 102.732L49.4995 86.1905L36.3823 76.62L29.3779 71.7757L25.8121 67.2858L24.2839 57.3608L30.6515 50.2716L39.3113 50.8623L41.4763 51.4531L50.2636 58.1879L68.9842 72.7209L93.4357 90.6804L97.0015 93.6343L98.4374 92.6652L98.6571 91.9801L97.0015 89.2625L83.757 65.2772L69.621 40.8192L63.2534 30.6579L61.5978 24.632C60.9565 22.1032 60.579 20.0111 60.579 17.4246L67.8381 7.49965L71.9133 6.19995L81.7193 7.49965L85.7946 11.0443L91.9074 24.9865L101.714 46.8451L116.996 76.62L121.453 85.4816L123.873 93.6343L124.764 96.1155H126.292V94.6976L127.566 77.9197L129.858 57.3608L132.15 30.8942L132.915 23.4505L136.608 14.4708L143.994 9.62643L149.725 12.344L154.437 19.0788L153.8 23.4505L150.998 41.6463L145.522 70.1215L141.957 89.2625H143.994L146.414 86.7813L156.093 74.0206L172.266 53.698L179.398 45.6635L187.803 36.802L193.152 32.5484H203.34L210.726 43.6549L207.415 55.1159L196.972 68.3492L188.312 79.5739L175.896 96.2095L168.191 109.585L168.882 110.689L170.738 110.53L198.755 104.504L213.91 101.787L231.994 98.7149L240.144 102.496L241.036 106.395L237.852 114.311L218.495 119.037L195.826 123.645L162.07 131.592L161.696 131.893L162.137 132.547L177.36 133.925L183.855 134.279H199.774L229.447 136.524L237.215 141.605L241.8 147.867L241.036 152.711L229.065 158.737L213.019 154.956L175.45 145.977L162.587 142.787H160.805V143.85L171.502 154.366L191.242 172.089L215.82 195.011L217.094 200.682L213.91 205.172L210.599 204.699L188.949 188.394L180.544 181.069L161.696 165.118H160.422V166.772L164.752 173.152L187.803 207.771L188.949 218.405L187.294 221.832L181.308 223.959L174.813 222.777L161.187 203.754L147.305 182.486L136.098 163.345L134.745 164.2L128.075 235.42L125.019 239.082L117.887 241.8L111.902 237.31L108.718 229.984L111.902 215.452L115.722 196.547L118.779 181.541L121.58 162.873L123.291 156.636L123.14 156.219L121.773 156.449L107.699 175.752L86.304 204.699L69.3663 222.777L65.291 224.431L58.2867 220.768L58.9235 214.27L62.8713 208.48L86.304 178.705L100.44 160.155L109.551 149.507L109.462 147.967L108.959 147.924L46.6977 188.512L35.6182 189.93L30.7788 185.44L31.4156 178.115L33.7079 175.752L52.4285 162.873Z" fill="#D97757"/></svg>',
-      openaiLogo: '<svg viewBox="0 0 24 24" fill="currentColor" width="1em" height="1em"><path d="M22.282 9.821a6 6 0 0 0-.516-4.91 6.05 6.05 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a6 6 0 0 0-3.998 2.9 6.05 6.05 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.05 6.05 0 0 0 6.515 2.9A6 6 0 0 0 13.26 24a6.06 6.06 0 0 0 5.772-4.206 6 6 0 0 0 3.997-2.9 6.06 6.06 0 0 0-.747-7.073M13.26 22.43a4.48 4.48 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.8.8 0 0 0 .392-.681v-6.737l2.02 1.168a.07.07 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494M3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.77.77 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646M2.34 7.896a4.5 4.5 0 0 1 2.366-1.973V11.6a.77.77 0 0 0 .388.677l5.815 3.354-2.02 1.168a.08.08 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855-5.833-3.387L15.119 7.2a.08.08 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667m2.01-3.023-.141-.085-4.774-2.782a.78.78 0 0 0-.785 0L9.409 9.23V6.897a.07.07 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.8.8 0 0 0-.393.681zm1.097-2.365 2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5Z"/></svg>',
+      anthropicLogo: '${ANTHROPIC_LOGO_SVG}',
+      openaiLogo: '${OPENAI_LOGO_SVG}',
     };
     function icon(name, size) {
       return '<span class="icon" style="font-size:' + (size || 16) + 'px">' + ICONS[name] + '</span>';
@@ -2539,28 +2647,10 @@ const SETUP_CLIENT_SCRIPT = `
         } catch (e) {
           // localStorage unavailable — nothing to clear
         }
-        // Not location.reload() — that reloads /connect itself, which only exists as a route
-        // while SETUP_MODE is true. handleSetup's relaunch flips SETUP_MODE off once the keys
-        // are saved, so reloading this same URL 404s; the dashboard now lives at /.
-        //
-        // A fixed delay here used to gamble on the relaunch (a whole new OS process — see
-        // writeConfigAndRelaunch) being ready by the time it fires; on a slow machine or a
-        // busy port-fallback it sometimes wasn't, and navigating too early just landed back
-        // on a half-dead connection. Poll for the new process to actually answer instead.
-        (function waitForDashboard(attempt) {
-          attempt = attempt || 0;
-          setTimeout(function () {
-            fetch('/', { method: 'HEAD', cache: 'no-store' })
-              .then(function (r) {
-                if (r.ok || attempt >= 30) location.href = '/';
-                else waitForDashboard(attempt + 1);
-              })
-              .catch(function () {
-                if (attempt >= 30) location.href = '/';
-                else waitForDashboard(attempt + 1);
-              });
-          }, 300);
-        })();
+        // /setup applies the new key(s) to the running process synchronously (see
+        // applyProviderKeys server-side) before responding, so there's no relaunch to wait
+        // for anymore — the dashboard is already live by the time this response arrives.
+        location.href = '/';
       } catch (e) {
         state.saving = false;
         alert('Could not reach the app to save — try again.');
@@ -2582,14 +2672,14 @@ const SETUP_CLIENT_SCRIPT = `
 // reproduced here — that's what /connect (setupPageHtml, built earlier this session) already
 // does, so every exit point from this guide (intro's "skip the guide", the top-nav "Skip this
 // step", step 2's "Continue") navigates to /connect instead of rendering a 4th local screen.
-const MOSS_WORDMARK_SVG =
-  '<svg width="290" height="67" viewBox="0 0 290 67" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-  '<path d="M128.928 21.377C132.972 21.377 135.383 24.2547 135.383 29.4656V53.42H144.95V30.3211C144.95 25.2658 146.972 21.377 151.716 21.377C155.76 21.377 158.171 24.2547 158.171 29.4656V53.42H168.048V26.9768C168.048 18.1883 162.527 13.2108 155.216 13.2108C149.772 13.2108 146.272 16.0106 143.938 20.1327H143.472C141.294 15.1551 137.172 13.2108 132.817 13.2108C126.906 13.2108 123.873 16.8661 122.628 19.666H122.162V19.666C122.162 16.4279 119.537 13.8029 116.299 13.8029H114.856H114.047H108.103C107.921 13.8029 107.773 13.951 107.773 14.1338V21.2028C107.773 21.3856 107.921 21.5337 108.103 21.5337H112.284C112.467 21.5337 112.615 21.6819 112.615 21.8647V53.42H122.162V30.3989C122.162 25.7324 123.95 21.377 128.928 21.377Z" fill="#131212"></path>' +
-  '<path d="M272.725 53.9648C261.992 53.9648 255.692 48.8317 255.148 41.2098H264.792C265.414 44.0874 267.436 46.7318 272.725 46.7318C277.08 46.7318 279.802 44.7874 279.802 42.0653C279.802 39.8098 277.625 38.7988 274.669 37.9433L267.047 35.9211C260.203 34.0546 256.081 31.2547 256.081 24.955C256.081 16.4776 264.092 13.2111 272.491 13.2111C283.147 13.2111 288.28 18.6553 289.057 25.8883H279.336C279.025 23.0106 276.925 20.4441 272.336 20.4441C268.758 20.4441 265.803 21.9995 265.803 24.7994C265.803 26.9771 267.747 27.9104 270.158 28.6104L278.091 30.6325C286.102 32.7324 289.602 36.3878 289.602 41.7542C289.602 48.5206 283.458 53.9648 272.725 53.9648Z" fill="#131212"></path>' +
-  '<path d="M234.843 53.9648C224.111 53.9648 217.811 48.8317 217.266 41.2098H226.91C227.533 44.0874 229.555 46.7318 234.843 46.7318C239.199 46.7318 241.921 44.7874 241.921 42.0653C241.921 39.8098 239.743 38.7988 236.788 37.9433L229.166 35.9211C222.322 34.0546 218.2 31.2547 218.2 24.955C218.2 16.4776 226.211 13.2111 234.61 13.2111C245.265 13.2111 250.398 18.6553 251.176 25.8883H241.454C241.143 23.0106 239.043 20.4441 234.455 20.4441C230.877 20.4441 227.922 21.9995 227.922 24.7994C227.922 26.9771 229.866 27.9104 232.277 28.6104L240.21 30.6325C248.221 32.7324 251.72 36.3878 251.72 41.7542C251.72 48.5206 245.576 53.9648 234.843 53.9648Z" fill="#131212"></path>' +
-  '<path d="M193.499 54.0425C182.024 54.0425 173.356 46.4984 173.356 33.5101C173.356 20.5996 182.024 13.2111 193.499 13.2111C204.809 13.2111 213.394 20.2885 213.394 33.5101C213.394 46.4984 205.139 54.0425 193.499 54.0425ZM184.005 33.5101C184.005 40.8209 187.472 46.2651 193.499 46.2651C199.525 46.2651 202.745 40.8209 202.745 33.5101C202.745 26.1216 199.525 21.0663 193.499 21.0663C187.472 21.0663 184.005 26.1216 184.005 33.5101Z" fill="#131212"></path>' +
-  '<path fill-rule="evenodd" clip-rule="evenodd" d="M54.3024 6.48735C57.6329 2.50284 62.1604 0.0109863 68.0358 0.0109863H77.8512C78.255 0.0109863 78.5824 0.338346 78.5824 0.742166V45.6836C78.5824 56.9139 69.4784 66.0178 58.2482 66.0178H48.4328C48.0289 66.0178 47.7016 65.6905 47.7016 65.2866V60.0219C47.7016 59.8542 47.4934 59.774 47.3786 59.8961C43.8275 63.6722 38.9012 66.0183 33.1076 66.0183H25.0579C24.654 66.0183 24.3267 65.691 24.3267 65.2871V60.1808C24.3267 60.0141 24.1207 59.9334 24.0052 60.0535C20.466 63.7368 15.5969 66.0174 9.88483 66.0174H0.931802C0.527983 66.0174 0.200623 65.69 0.200623 65.2862V34.9259C0.200623 23.6957 9.30455 14.5917 20.5348 14.5917H29.8076C32.8919 9.66944 38.0215 6.48735 44.6609 6.48735H54.3024ZM68.0358 7.32278H71.6362V45.6836C71.6362 52.8757 65.4402 58.706 58.2482 58.706H55.0134V20.3452C55.0134 13.1531 60.8437 7.32278 68.0358 7.32278ZM47.9481 13.7991H44.6609C37.4688 13.7991 31.6385 19.6295 31.6385 26.8216V58.7065H33.1076C41.1019 58.7065 47.9481 52.2259 47.9481 44.2317V13.7991ZM24.7253 21.9035H20.5348C13.3427 21.9035 7.51242 27.7338 7.51242 34.9259V58.7056H9.88483C17.8791 58.7056 24.7253 52.225 24.7253 44.2307V21.9035Z" fill="#131212"></path>' +
-  "</svg>";
+// Same 5 paths as MOSS_ICON_MARK_PATH_D's source file, scaled up via width/height alone —
+// viewBox stays the source's native 79x19, so SVG scales the exact same path data rather
+// than needing every coordinate hand-multiplied — and recolored from currentColor to a
+// fixed near-black, since this nav bar sits on plain white with no ambient text color to
+// inherit the way index.html's dark app-bar badge does.
+const MOSS_WORDMARK_SVG = MOSS_LOGO_SOURCE_SVG.replace(/width="79"/, 'width="290"')
+  .replace(/height="19"/, 'height="67"')
+  .replace(/fill="currentColor"/g, 'fill="#131212"');
 
 const ONBOARDING_CLIENT_SCRIPT = `
     const ICONS = {
@@ -2597,13 +2687,13 @@ const ONBOARDING_CLIENT_SCRIPT = `
       chevronLeft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="1em" height="1em"><path d="M15 6l-6 6 6 6"/></svg>',
       chevronUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="1em" height="1em"><path d="M6 15l6-6 6 6"/></svg>',
       chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="1em" height="1em"><path d="M6 9l6 6 6-6"/></svg>',
-      teams: '<svg viewBox="0 0 24 24" fill="none" width="1em" height="1em"><path d="M10.1992 12C12.9606 12 15.1992 9.76142 15.1992 7C15.1992 4.23858 12.9606 2 10.1992 2C7.43779 2 5.19922 4.23858 5.19922 7C5.19922 9.76142 7.43779 12 10.1992 12Z" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M1 22C1.57038 20.0332 2.74795 18.2971 4.36438 17.0399C5.98081 15.7827 7.95335 15.0687 10 15C14.12 15 17.63 17.91 19 22" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M17.8205 4.44006C18.5822 4.83059 19.1986 5.45518 19.579 6.22205C19.9594 6.98891 20.0838 7.85753 19.9338 8.70032C19.7838 9.5431 19.3674 10.3155 18.7458 10.9041C18.1243 11.4926 17.3302 11.8662 16.4805 11.97" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M17.3203 14.5701C18.6543 14.91 19.8779 15.5883 20.8729 16.5396C21.868 17.4908 22.6007 18.6827 23.0003 20" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-      send: '<svg viewBox="0 0 24 24" fill="currentColor" width="1em" height="1em"><g transform="rotate(15 12 12)"><path d="M2.009,10.845a1,1,0,0,0,.849.859l8.258,1.18,1.18,8.258a1,1,0,0,0,1.909.252l7.714-18a1,1,0,0,0-1.313-1.313L2.606,9.8A1,1,0,0,0,2.009,10.845Zm11.762,6.483-.711-4.974,4.976-4.976Zm2.85-11.363-4.974,4.974-4.976-.71Z"></path></g></svg>',
-      dollar: '<svg viewBox="-5 0 24 24" width="1em" height="1em" fill="none"><g fill="currentColor"><g transform="translate(-63,-2917)"><g transform="translate(56,160)"><path d="M13.0000978,2768 C10.3390978,2768 9.00009781,2766.371 9.00009781,2764.5 C9.00009781,2762.691 10.2710978,2761 13.0000978,2761 L13.0000978,2768 Z M19.0000978,2773.5 L19.0000978,2773.5 C19.0000978,2775.309 17.7290978,2777 15.0000978,2777 L15.0000978,2770 C17.6610978,2770 19.0000978,2771.629 19.0000978,2773.5 L19.0000978,2773.5 Z M21.0000978,2773.5 L21.0000978,2773.5 C21.0000978,2770.732 18.9750978,2768 15.0000978,2768 L15.0000978,2761 L17.0000978,2761 C18.1050978,2761 19.0000978,2761.895 19.0000978,2763 L21.0000978,2763 C21.0000978,2760.791 19.2090978,2759 17.0000978,2759 L15.0000978,2759 L15.0000978,2757 L13.0000978,2757 L13.0000978,2759 C9.04209781,2759 7.00009781,2761.722 7.00009781,2764.5 C7.00009781,2767.268 9.02509781,2770 13.0000978,2770 L13.0000978,2777 L11.0000978,2777 C9.89509781,2777 9.00009781,2776.105 9.00009781,2775 L7.00009781,2775 C7.00009781,2777.209 8.79109781,2779 11.0000978,2779 L13.0000978,2779 L13.0000978,2781 L15.0000978,2781 L15.0000978,2779 C18.9580978,2779 21.0000978,2776.278 21.0000978,2773.5 L21.0000978,2773.5 Z"/></g></g></g></svg>',
+      teams: '${TEAMS_ICON_SVG}',
+      send: '${SEND_ICON_SVG}',
+      dollar: '${DOLLAR_ICON_SVG}',
       addons: '<svg viewBox="0 0 24 24" fill="none" width="1em" height="1em"><path opacity="0.34" d="M5 10H7C9 10 10 9 10 7V5C10 3 9 2 7 2H5C3 2 2 3 2 5V7C2 9 3 10 5 10Z" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 10H19C21 10 22 9 22 7V5C22 3 21 2 19 2H17C15 2 14 3 14 5V7C14 9 15 10 17 10Z" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.34" d="M17 22H19C21 22 22 21 22 19V17C22 15 21 14 19 14H17C15 14 14 15 14 17V19C14 21 15 22 17 22Z" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 22H7C9 22 10 21 10 19V17C10 15 9 14 7 14H5C3 14 2 15 2 17V19C2 21 3 22 5 22Z" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/></svg>',
       sparkles: '<svg viewBox="0 0 24 24" fill="currentColor" width="1em" height="1em"><path d="M12 3l1.4 4.3L18 9l-4.6 1.7L12 15l-1.4-4.3L6 9l4.6-1.7Z"/><path d="M19 14.5l.6 1.9 1.9.6-1.9.6-.6 1.9-.6-1.9-1.9-.6 1.9-.6Z"/></svg>',
-      key: '<svg viewBox="-7 0 32 32" fill="none" width="1em" height="1em"><g transform="rotate(-35 9 16)"><path d="M4.28 20.28c-2.36 0-4.28-1.92-4.28-4.28s1.92-4.28 4.28-4.28c1.48 0 2.88 0.8 3.64 2.040h8c1.24 0 2.28 1 2.28 2.28 0 1.24-1 2.28-2.28 2.28-0.080 0-0.28 0.12-0.44 0.24-0.32 0.2-0.76 0.48-1.36 0.48s-1.040-0.28-1.36-0.48c-0.16-0.12-0.36-0.24-0.44-0.24s-0.28 0.12-0.44 0.24c-0.32 0.2-0.76 0.48-1.36 0.48s-1.040-0.28-1.36-0.48c-0.16-0.12-0.36-0.24-0.44-0.24h-0.8c-0.76 1.2-2.12 1.96-3.64 1.96zM4.28 13.36c-1.44 0-2.64 1.2-2.64 2.64s1.2 2.64 2.64 2.64c1.040 0 1.96-0.6 2.4-1.56 0.12-0.28 0.44-0.48 0.76-0.48h1.28c0.6 0 1.040 0.28 1.36 0.48 0.16 0.12 0.36 0.24 0.44 0.24s0.28-0.12 0.44-0.24c0.32-0.2 0.76-0.48 1.36-0.48s1.040 0.28 1.36 0.48c0.16 0.12 0.36 0.24 0.44 0.24s0.28-0.12 0.44-0.24c0.32-0.2 0.76-0.48 1.36-0.48 0.32 0 0.6-0.28 0.6-0.6s-0.28-0.6-0.6-0.6h-8.48c-0.32 0-0.6-0.2-0.76-0.48-0.4-0.96-1.36-1.56-2.4-1.56zM4.96 16c0 0.486-0.394 0.88-0.88 0.88s-0.88-0.394-0.88-0.88c0-0.486 0.394-0.88 0.88-0.88s0.88 0.394 0.88 0.88z" fill="currentColor"></path></g></svg>',
-      repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="1em" height="1em"><path d="M4.06189 13C4.02104 12.6724 4 12.3387 4 12C4 7.58172 7.58172 4 12 4C14.5006 4 16.7332 5.14727 18.2002 6.94416M19.9381 11C19.979 11.3276 20 11.6613 20 12C20 16.4183 16.4183 20 12 20C9.61061 20 7.46589 18.9525 6 17.2916M9 17H6V17.2916M18.2002 4V6.94416M18.2002 6.94416V6.99993L15.2002 7M6 20V17.2916"/></svg>',
+      key: '${KEY_ICON_SVG}',
+      repeat: '${REPEAT_ICON_SVG}',
       questionmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="1em" height="1em"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.5a2.7 2.7 0 1 1 3.8 2.5c-.8.35-1.1.9-1.1 1.65v.4" stroke-linecap="round"/><circle cx="12" cy="17.2" r="0.9" fill="currentColor" stroke="none"/></svg>',
       shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" width="1em" height="1em"><path d="M12 3l7 3.1v4.9c0 5-3.1 8.6-7 10-3.9-1.4-7-5-7-10V6.1Z"/></svg>',
       search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" width="1em" height="1em"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.35-4.35"/></svg>',
@@ -3373,8 +3463,8 @@ async function handleVerifyKey(req, res) {
 // key), and naively writing just that key would silently delete the other, already-working
 // one from .env. Pulled out as its own pure function (rather than left inline in handleSetup)
 // specifically so this merge logic — the exact bug fixed here previously — can be unit
-// tested without also exercising handleSetup's live network verification, filesystem write,
-// and process relaunch.
+// tested without also exercising handleSetup's live network verification and filesystem
+// write.
 export function resolveKeysToPersist({
   anthropicKey,
   openaiKey,
@@ -3388,53 +3478,6 @@ export function resolveKeysToPersist({
       anthropicKey || (anthropicEnabled ? existingAnthropicKey : ""),
     finalOpenaiKey: openaiKey || (openaiEnabled ? existingOpenaiKey : ""),
   };
-}
-
-// Writes .env with whichever keys are still truthy (deleting the file entirely if none are
-// — same on-disk state as a fresh clone, so SETUP_MODE picks it back up naturally), then
-// relaunches so the freshly-written config loads cleanly instead of trying to hot-swap the
-// KEY/HEADERS constants already baked in at module load. Used by both handleSetup (saving a
-// new/changed key) and handleRemoveKey (dropping one).
-function writeConfigAndRelaunch(res, anthropicKey, openaiKey) {
-  const lines = [];
-  if (anthropicKey) lines.push(`ANTHROPIC_ADMIN_KEY=${anthropicKey}`);
-  if (openaiKey) lines.push(`OPENAI_ADMIN_KEY=${openaiKey}`);
-  const configPath = join(ROOT, ".env");
-  if (lines.length) writeFileSync(configPath, lines.join("\n") + "\n");
-  else if (existsSync(configPath)) unlinkSync(configPath);
-  console.log(
-    `.env written: anthropic=${anthropicKey ? "yes" : "no"}, openai=${openaiKey ? "yes" : "no"} — relaunching to apply`,
-  );
-  sendJson(res, 200, { ok: true });
-  // setTimeout gives the response above time to actually flush to the client before this
-  // process exits.
-  setTimeout(() => {
-    const relaunchArgs = isSea()
-      ? []
-      : process.execArgv.concat(process.argv.slice(1));
-    // spawn() without an explicit env inherits this whole process's current process.env —
-    // including the OLD ANTHROPIC_ADMIN_KEY/OPENAI_ADMIN_KEY already loaded in memory. A
-    // changed or removed key wouldn't take effect in the relaunched process without this:
-    // node's own --env-file-if-exists can't "unset" a key that's no longer in .env, and
-    // loadExternalConfig() above explicitly skips a var that's already present in
-    // process.env — so the stale inherited value would silently survive either way. Strip
-    // both here so the relaunched process picks them up fresh, exclusively from the
-    // just-written .env.
-    const relaunchEnv = { ...process.env };
-    delete relaunchEnv.ANTHROPIC_ADMIN_KEY;
-    delete relaunchEnv.OPENAI_ADMIN_KEY;
-    // Only detach for the packaged .app build, where there's no terminal/parent process to
-    // begin with. In terminal use (npm start / npm run demo) detaching would move the
-    // relaunched process into its own process group, putting it out of reach of the
-    // terminal's own Ctrl+C — inherit stdio and stay in the same group instead, so it
-    // behaves like any other Node dev server.
-    spawn(process.execPath, relaunchArgs, {
-      detached: isSea(),
-      stdio: isSea() ? "ignore" : "inherit",
-      env: relaunchEnv,
-    }).unref();
-    process.exit(0);
-  }, 200);
 }
 
 async function handleSetup(req, res) {
@@ -3474,7 +3517,8 @@ async function handleSetup(req, res) {
     existingAnthropicKey: KEY,
     existingOpenaiKey: OPENAI_KEY,
   });
-  writeConfigAndRelaunch(res, finalAnthropicKey, finalOpenaiKey);
+  applyProviderKeys(finalAnthropicKey, finalOpenaiKey);
+  sendJson(res, 200, { ok: true });
 }
 
 async function handleRemoveKey(req, res) {
@@ -3490,12 +3534,12 @@ async function handleRemoveKey(req, res) {
   if (provider !== "anthropic" && provider !== "openai") {
     return sendJson(res, 400, { error: "Unknown provider" });
   }
-  console.log(`Removing ${provider} key and relaunching...`);
-  writeConfigAndRelaunch(
-    res,
+  console.log(`Removing ${provider} key...`);
+  applyProviderKeys(
     provider === "anthropic" ? "" : KEY,
     provider === "openai" ? "" : OPENAI_KEY,
   );
+  sendJson(res, 200, { ok: true });
 }
 const server = createServer(async (req, res) => {
   try {
@@ -3531,7 +3575,7 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "text/html" });
       return res.end(setupPageHtml(changeProvider));
     }
-    if (SETUP_MODE) {
+    if (isSetupMode()) {
       // The onboarding guide (intro + "get to know your spend" + "get clear on your data")
       // is everything BEFORE connecting providers; every exit point from it (skip the guide,
       // skip a step, finish step 2) navigates to /connect (handled above) rather than
