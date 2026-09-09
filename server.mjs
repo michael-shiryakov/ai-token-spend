@@ -2542,7 +2542,25 @@ const SETUP_CLIENT_SCRIPT = `
         // Not location.reload() — that reloads /connect itself, which only exists as a route
         // while SETUP_MODE is true. handleSetup's relaunch flips SETUP_MODE off once the keys
         // are saved, so reloading this same URL 404s; the dashboard now lives at /.
-        setTimeout(function () { location.href = '/'; }, 1200);
+        //
+        // A fixed delay here used to gamble on the relaunch (a whole new OS process — see
+        // writeConfigAndRelaunch) being ready by the time it fires; on a slow machine or a
+        // busy port-fallback it sometimes wasn't, and navigating too early just landed back
+        // on a half-dead connection. Poll for the new process to actually answer instead.
+        (function waitForDashboard(attempt) {
+          attempt = attempt || 0;
+          setTimeout(function () {
+            fetch('/', { method: 'HEAD', cache: 'no-store' })
+              .then(function (r) {
+                if (r.ok || attempt >= 30) location.href = '/';
+                else waitForDashboard(attempt + 1);
+              })
+              .catch(function () {
+                if (attempt >= 30) location.href = '/';
+                else waitForDashboard(attempt + 1);
+              });
+          }, 300);
+        })();
       } catch (e) {
         state.saving = false;
         alert('Could not reach the app to save — try again.');
@@ -3384,6 +3402,9 @@ function writeConfigAndRelaunch(res, anthropicKey, openaiKey) {
   const configPath = join(ROOT, ".env");
   if (lines.length) writeFileSync(configPath, lines.join("\n") + "\n");
   else if (existsSync(configPath)) unlinkSync(configPath);
+  console.log(
+    `.env written: anthropic=${anthropicKey ? "yes" : "no"}, openai=${openaiKey ? "yes" : "no"} — relaunching to apply`,
+  );
   sendJson(res, 200, { ok: true });
   // setTimeout gives the response above time to actually flush to the client before this
   // process exits.
@@ -3469,6 +3490,7 @@ async function handleRemoveKey(req, res) {
   if (provider !== "anthropic" && provider !== "openai") {
     return sendJson(res, 400, { error: "Unknown provider" });
   }
+  console.log(`Removing ${provider} key and relaunching...`);
   writeConfigAndRelaunch(
     res,
     provider === "anthropic" ? "" : KEY,

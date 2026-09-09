@@ -4394,32 +4394,81 @@
           });
         }
 
-        ["anthropic", "openai"].forEach((key) => {
-          const chip = document.getElementById("providerChip-" + key);
-          const btn = document.getElementById("providerChipBtn-" + key);
-          const menu = document.getElementById("providerMenu-" + key);
-          if (!chip || !btn || !menu) return;
-          const info = (window.__ATS_PROVIDERS__ || {})[key] || {
-            connected: false,
-            masked: null,
-          };
-
-          chip.querySelector(".provider-chip-dot").classList.toggle(
-            "connected",
-            info.connected,
+        function providerInfo(key) {
+          return (
+            (window.__ATS_PROVIDERS__ || {})[key] || {
+              connected: false,
+              masked: null,
+            }
           );
-          chip.querySelector(".provider-chip-label").textContent =
-            info.connected ? PROVIDER_NAMES[key] : "Connect " + PROVIDER_NAMES[key];
+        }
+
+        // Re-reads window.__ATS_PROVIDERS__ every call (not a snapshot taken once at page
+        // load) so this can also be called right after a remove/change action to reflect the
+        // new state in place, without a full page reload.
+        function renderChip(key) {
+          const chip = document.getElementById("providerChip-" + key);
+          const menu = document.getElementById("providerMenu-" + key);
+          if (!chip || !menu) return;
+          const info = providerInfo(key);
+          chip
+            .querySelector(".provider-chip-dot")
+            .classList.toggle("connected", info.connected);
+          chip.querySelector(".provider-chip-label").textContent = info.connected
+            ? PROVIDER_NAMES[key]
+            : "Connect " + PROVIDER_NAMES[key];
           chip.querySelector(".provider-chip-caret").innerHTML = info.connected
             ? CHEVRON_DOWN_SVG
             : PLUS_SVG;
           if (info.connected) {
             menu.querySelector(".provider-menu-key").textContent = info.masked || "";
           }
+        }
+
+        function clearStaleProviderMixState() {
+          // The provider mix just changed — any cached totals or dismissed nudges from
+          // before are stale (same cleanup as the setup flow's proceed() in server.mjs).
+          try {
+            Object.keys(sessionStorage)
+              .filter((k) => k.indexOf("atsCache:v1:") === 0)
+              .forEach((k) => sessionStorage.removeItem(k));
+          } catch (e) {
+            // sessionStorage unavailable — nothing to clear
+          }
+          try {
+            Object.keys(localStorage)
+              .filter((k) => k.indexOf("atsDismissedConnectBanner:v1:") === 0)
+              .forEach((k) => localStorage.removeItem(k));
+          } catch (e) {
+            // localStorage unavailable — nothing to clear
+          }
+        }
+
+        // A fixed delay here used to gamble on the relaunch (a whole new OS process — see
+        // writeConfigAndRelaunch in server.mjs) being ready by the time it fired; on a slow
+        // machine or a busy port-fallback it sometimes wasn't. Poll for the new process to
+        // actually answer instead of guessing.
+        async function waitForServer(attempt = 0) {
+          await new Promise((r) => setTimeout(r, 300));
+          try {
+            const check = await fetch("/", { method: "HEAD", cache: "no-store" });
+            if (check.ok || attempt >= 30) return;
+          } catch (e) {
+            if (attempt >= 30) return;
+          }
+          return waitForServer(attempt + 1);
+        }
+
+        ["anthropic", "openai"].forEach((key) => {
+          const chip = document.getElementById("providerChip-" + key);
+          const btn = document.getElementById("providerChipBtn-" + key);
+          const menu = document.getElementById("providerMenu-" + key);
+          if (!chip || !btn || !menu) return;
+          renderChip(key);
 
           btn.addEventListener("click", (e) => {
             e.stopPropagation();
-            if (!info.connected) {
+            if (!providerInfo(key).connected) {
               location.href = "/connect";
               return;
             }
@@ -4455,23 +4504,25 @@
                 body: JSON.stringify({ provider: key }),
               });
               if (!res.ok) throw new Error("remove-key failed");
-              // Same cache-clearing as the setup flow's proceed() — the provider mix just
-              // changed, so any cached totals or dismissed nudges from before are stale.
-              try {
-                Object.keys(sessionStorage)
-                  .filter((k) => k.indexOf("atsCache:v1:") === 0)
-                  .forEach((k) => sessionStorage.removeItem(k));
-              } catch (e) {
-                // sessionStorage unavailable — nothing to clear
+              clearStaleProviderMixState();
+              const otherKey = key === "anthropic" ? "openai" : "anthropic";
+              const anotherProviderRemains = providerInfo(otherKey).connected;
+              await waitForServer();
+              if (anotherProviderRemains) {
+                // Still have data to show — update this chip and quietly re-fetch the
+                // current view in place (same path a date-range switch already uses)
+                // instead of a full page reload that resets the whole dashboard shell.
+                window.__ATS_PROVIDERS__ = window.__ATS_PROVIDERS__ || {};
+                window.__ATS_PROVIDERS__[key] = { connected: false, masked: null };
+                renderChip(key);
+                removeBtn.disabled = false;
+                removeBtn.querySelector("span").textContent = "Remove key";
+                if (typeof loadData === "function") loadData();
+              } else {
+                // Nothing left connected — there's no dashboard to render in place
+                // anymore, so this really does need the fresh onboarding page.
+                location.reload();
               }
-              try {
-                Object.keys(localStorage)
-                  .filter((k) => k.indexOf("atsDismissedConnectBanner:v1:") === 0)
-                  .forEach((k) => localStorage.removeItem(k));
-              } catch (e) {
-                // localStorage unavailable — nothing to clear
-              }
-              setTimeout(() => location.reload(), 1200);
             } catch (e) {
               alert("Could not remove the key — try again.");
               removeBtn.disabled = false;
