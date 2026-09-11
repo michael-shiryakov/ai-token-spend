@@ -26,6 +26,20 @@ test("setupPageCopy: 'add-anthropic' shows only the Anthropic card and does ment
   assert.match(copy.title + " " + copy.subtitle, /adoption/i);
 });
 
+test("setupPageCopy: 'change-anthropic' shows only the Anthropic card, framed as an update not a first connect", () => {
+  const copy = setupPageCopy("change-anthropic");
+  assert.deepEqual(copy.cards, ["anthropic"]);
+  assert.equal(copy.buttonLabel, "Save key");
+  assert.match(copy.title, /change/i);
+});
+
+test("setupPageCopy: 'change-openai' shows only the OpenAI card, framed as an update not a first connect", () => {
+  const copy = setupPageCopy("change-openai");
+  assert.deepEqual(copy.cards, ["openai"]);
+  assert.equal(copy.buttonLabel, "Save key");
+  assert.match(copy.title, /change/i);
+});
+
 // Regression coverage for the silent .env-overwrite bug fixed earlier: adding one provider
 // to an already-configured install must never drop the other, already-working key.
 test("resolveKeysToPersist: first run, both keys submitted, are both persisted", () => {
@@ -76,6 +90,18 @@ test("resolveKeysToPersist: adding Anthropic to an OpenAI-only install keeps the
   assert.deepEqual(result, { finalAnthropicKey: "sk-ant-new", finalOpenaiKey: "sk-openai-existing" });
 });
 
+test("resolveKeysToPersist: both providers already enabled with empty new-key inputs preserves both existing keys", () => {
+  const result = resolveKeysToPersist({
+    anthropicKey: "",
+    openaiKey: "",
+    anthropicEnabled: true,
+    openaiEnabled: true,
+    existingAnthropicKey: "sk-ant-existing",
+    existingOpenaiKey: "sk-openai-existing",
+  });
+  assert.deepEqual(result, { finalAnthropicKey: "sk-ant-existing", finalOpenaiKey: "sk-openai-existing" });
+});
+
 function withStubbedFetch(impl, run) {
   const original = globalThis.fetch;
   globalThis.fetch = impl;
@@ -119,6 +145,16 @@ test("verifyKey: a network failure does not block saving (returns null, not an e
 test("verifyKey: a 200 response means the key is valid (returns null)", async () => {
   await withStubbedFetch(
     async () => ({ status: 200 }),
+    async () => {
+      const message = await verifyKey("Anthropic", "https://example.test", {}, "permission denied");
+      assert.equal(message, null);
+    }
+  );
+});
+
+test("verifyKey: a 500 response is not treated as a rejected/permission-denied key (returns null, same as success)", async () => {
+  await withStubbedFetch(
+    async () => ({ status: 500 }),
     async () => {
       const message = await verifyKey("Anthropic", "https://example.test", {}, "permission denied");
       assert.equal(message, null);

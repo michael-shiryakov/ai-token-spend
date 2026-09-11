@@ -271,6 +271,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const MIME = {
   ".html": "text/html",
   ".js": "text/javascript",
+  ".mjs": "text/javascript",
   ".css": "text/css",
   ".json": "application/json",
 };
@@ -975,7 +976,7 @@ async function fetchCostByContextWindow(startingAt, endingAt) {
   ]);
 }
 
-function aggregateContextWindow(buckets) {
+export function aggregateContextWindow(buckets) {
   const totals = new Map();
   const daily = new Map();
 
@@ -1095,7 +1096,7 @@ async function fetchOpenAiCostBuckets(startingAtUnix, endingAtUnix, groupBy) {
 // buckets; the equivalent OpenAI window yields 8, since OpenAI's bucket
 // boundaries land differently relative to "now"). Keying by date string
 // instead of array index avoids misaligning the two providers' series.
-function aggregateOpenAiCostBuckets(buckets) {
+export function aggregateOpenAiCostBuckets(buckets) {
   const dailyByDate = new Map();
   let totalSpend = 0;
 
@@ -1138,7 +1139,7 @@ async function fetchOpenAiUsageBuckets(startingAtUnix, endingAtUnix) {
   return buckets;
 }
 
-function aggregateOpenAiUsageBuckets(buckets) {
+export function aggregateOpenAiUsageBuckets(buckets) {
   const dailyByDate = new Map();
   let totalRequests = 0;
 
@@ -1249,7 +1250,7 @@ async function fetchUsageBuckets(startingAt, endingAt) {
   return fetchAllBuckets("usage_report", startingAt, endingAt);
 }
 
-function reduceUsageRows(rows) {
+export function reduceUsageRows(rows) {
   let uncachedInputTokens = 0;
   let cacheReadInputTokens = 0;
   let cacheCreationTokens = 0;
@@ -1285,7 +1286,7 @@ function reduceUsageRows(rows) {
   };
 }
 
-function aggregateUsage(buckets) {
+export function aggregateUsage(buckets) {
   return reduceUsageRows(buckets.flatMap((b) => b.results));
 }
 
@@ -1296,7 +1297,7 @@ async function fetchUsageGroupedBy(startingAt, endingAt, dimensionKey) {
   return fetchAllBuckets("usage_report", startingAt, endingAt, [dimensionKey]);
 }
 
-function aggregateUsageGrouped(buckets, dimensionKey) {
+export function aggregateUsageGrouped(buckets, dimensionKey) {
   const rowsByKey = new Map();
   for (const bucket of buckets) {
     for (const row of bucket.results) {
@@ -1339,7 +1340,7 @@ async function fetchCostTotalsByDimension(startingAt, endingAt, dimensionKey) {
 // handling, generalized to any single cost_report group_by dimension — used
 // by the Team investigation tab's combined spend+requests chart, which
 // (unlike the Team table) needs a daily series, not just a period total.
-function aggregateCostSeriesByDimension(buckets, dimensionKey) {
+export function aggregateCostSeriesByDimension(buckets, dimensionKey) {
   const labels = buckets.map((b) => b.starting_at.slice(0, 10));
   const totals = new Map();
   const dailySpend = new Map();
@@ -1527,7 +1528,7 @@ async function fetchActivitySummaries(startingDate) {
   return data.summaries ?? [];
 }
 
-function shapeActivitySummary(s) {
+export function shapeActivitySummary(s) {
   return {
     date: s.starting_at?.slice(0, 10) ?? null,
     assignedSeats: s.assigned_seat_count ?? null,

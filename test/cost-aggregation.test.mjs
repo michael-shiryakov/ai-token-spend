@@ -13,6 +13,14 @@ test("toDollars: converts a cents-as-decimal-string amount to dollars", () => {
   assert.equal(toDollars("0.00"), 0);
 });
 
+test("toDollars: a non-numeric string yields NaN rather than throwing", () => {
+  assert.ok(Number.isNaN(toDollars("abc")));
+});
+
+test("toDollars: a negative amount converts to negative dollars", () => {
+  assert.equal(toDollars("-500.00"), -5);
+});
+
 test("emptyDailyBuckets: one zero-value bucket per whole day in the range, correctly dated", () => {
   const buckets = emptyDailyBuckets("2026-01-01T00:00:00.000Z", "2026-01-04T00:00:00.000Z");
   assert.equal(buckets.length, 3);
@@ -107,6 +115,57 @@ test("aggregateCostBuckets: rows without product/model still count toward totals
   assert.deepEqual(result.byModel, []);
 });
 
+test("aggregateCostBuckets: a row missing amount/list_amount still counts requests but poisons spend with NaN", () => {
+  const buckets = [
+    {
+      starting_at: "2026-01-01T00:00:00Z",
+      results: [{ product: "api", model: "claude-3", requests: 4 }],
+    },
+  ];
+  const result = aggregateCostBuckets(buckets);
+  assert.ok(Number.isNaN(result.totals.spend));
+  assert.ok(Number.isNaN(result.totals.listAmount));
+  assert.equal(result.totals.requests, 4);
+});
+
+test("aggregateCostBuckets: requests defaults to 0 when absent, distinct from an explicit 0", () => {
+  const buckets = [
+    {
+      starting_at: "2026-01-01T00:00:00Z",
+      results: [{ product: "api", model: "claude-3", amount: "100.00", list_amount: "100.00" }],
+    },
+  ];
+  const result = aggregateCostBuckets(buckets);
+  assert.equal(result.totals.requests, 0);
+  assert.equal(result.byProduct[0].requests, 0);
+});
+
+test("aggregateCostBuckets: duplicate product/model pairs within the same bucket are summed, not overwritten", () => {
+  const buckets = [
+    {
+      starting_at: "2026-01-01T00:00:00Z",
+      results: [
+        { product: "api", model: "claude-3", amount: "100.00", list_amount: "100.00", requests: 1 },
+        { product: "api", model: "claude-3", amount: "200.00", list_amount: "200.00", requests: 2 },
+      ],
+    },
+  ];
+  const result = aggregateCostBuckets(buckets);
+  assert.equal(result.byProduct.length, 1);
+  assert.equal(result.byProduct[0].totalSpend, 3);
+  assert.equal(result.byProduct[0].requests, 3);
+  assert.equal(result.byModel.length, 1);
+  assert.equal(result.byModel[0].totalSpend, 3);
+});
+
+test("computeCachingSavings: missing keys in tokenCosts default to 0 rather than throwing", () => {
+  const usage = { uncachedInputTokens: 1000, totalInputTokens: 2000 };
+  const result = computeCachingSavings(usage, new Map());
+  assert.equal(result.actualInputCost, 0);
+  assert.equal(result.hypotheticalInputCost, 0);
+  assert.equal(result.cachingSavings, 0);
+});
+
 test("computeCachingSavings: computes savings from the blended uncached rate", () => {
   const usage = { uncachedInputTokens: 1000, totalInputTokens: 5000 };
   const tokenCosts = new Map([
@@ -168,6 +227,24 @@ test("parseOpenAiLineItem: priority and long context combine independently", () 
 
 test("parseOpenAiLineItem: a non-matching string (e.g. a tool cost) falls back to the 'Other (tools)' shape", () => {
   assert.deepEqual(parseOpenAiLineItem("web search tool calls"), {
+    model: "Other (tools)",
+    tokenType: "other",
+    priority: false,
+    longContext: false,
+  });
+});
+
+test("parseOpenAiLineItem: a string with no comma separator falls back to the 'Other (tools)' shape", () => {
+  assert.deepEqual(parseOpenAiLineItem("gpt-4o input"), {
+    model: "Other (tools)",
+    tokenType: "other",
+    priority: false,
+    longContext: false,
+  });
+});
+
+test("parseOpenAiLineItem: an empty string falls back to the 'Other (tools)' shape", () => {
+  assert.deepEqual(parseOpenAiLineItem(""), {
     model: "Other (tools)",
     tokenType: "other",
     priority: false,

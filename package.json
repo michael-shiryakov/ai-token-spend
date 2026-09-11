@@ -1,6 +1,7 @@
 {
   "name": "ai-token-spend",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",

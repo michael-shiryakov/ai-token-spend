@@ -56,6 +56,14 @@ test("rangeDays: a missing or disallowed value falls back to 7", () => {
   assert.equal(rangeDays(new URLSearchParams("days=999")), 7);
 });
 
+test("rangeDays: a fractional value is silently truncated (parseInt semantics), not rejected", () => {
+  assert.equal(rangeDays(new URLSearchParams("days=28.9")), 28);
+});
+
+test("rangeDays: a negative value is disallowed and falls back to 7", () => {
+  assert.equal(rangeDays(new URLSearchParams("days=-7")), 7);
+});
+
 test("resolveRange: a preset days param resolves to that many days ending near now", () => {
   const before = Date.now();
   const range = resolveRange(new URLSearchParams("days=7"));
@@ -83,6 +91,19 @@ test("resolveRange: a valid custom from/to range in the past is honored exactly"
 test("resolveRange: a malformed custom date falls back to the 7-day preset default", () => {
   const range = resolveRange(new URLSearchParams("from=not-a-date&to=2026-01-10"));
   assert.equal(range.days, 7);
+});
+
+test("resolveRange: only one of from/to present falls back to the preset default", () => {
+  const range = resolveRange(new URLSearchParams("from=2026-01-01"));
+  assert.equal(range.days, 7);
+});
+
+test("resolveRange: a `to` date in the future is clamped to now instead of returning a range past the present", () => {
+  const before = Date.now();
+  const range = resolveRange(new URLSearchParams("from=2026-01-01&to=2099-01-01"));
+  const after = Date.now();
+  const endingAtMs = new Date(range.endingAt).getTime();
+  assert.ok(endingAtMs >= before && endingAtMs <= after, "endingAt should be clamped to now, not the far-future `to`");
 });
 
 test("resolveRange: from after to falls back to the preset default instead of a negative range", () => {

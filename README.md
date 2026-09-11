@@ -8,6 +8,19 @@ TODO: add a video/gif guide of how to install this project
 
 - [Node.js](https://nodejs.org/) 22 or newer
 
+1. Install nvm (if you don't have it):
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+Then restart your terminal (or run source ~/.zshrc).
+
+2. Install the specific Node version:
+nvm install 24.14.1
+
+3. Use it:
+nvm use 24.14.1
+
+4. Set a default version so nvm loads it automatically every time
+nvm alias default 24.14.1
+
 ## Setup
 
 1. Clone this repo and install nothing - there are no dependencies to install.
@@ -47,3 +60,7 @@ Then open [http://localhost:4173](http://localhost:4173), and enter anything (e.
 ## How it works
 
 Everything lives in two files: `server.mjs` (a dependency-free Node HTTP server) and `index.html` (a single self-contained page — styles, fonts, and scripts all inlined, no build step). Your API keys stay in your local `.env` file and are only used to call the Anthropic/OpenAI APIs directly from your machine.
+
+## License
+
+[MIT](./LICENSE) © Moss
