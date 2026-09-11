@@ -19,7 +19,7 @@ nvm install 24.14.1
 nvm use 24.14.1
 
 4. Set a default version so nvm loads it automatically every time
-nvm alias default 24.14.1
+nvm alias default 24.14.1 
 
 ## Setup
 
