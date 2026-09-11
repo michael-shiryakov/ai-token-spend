@@ -68,7 +68,7 @@ function monochromeIconSvg(name) {
 // around the file's own bow-of-the-key coordinates.
 const KEY_ICON_SVG = monochromeIconSvg("key").replace(
   /^(<svg[^>]*>)([\s\S]*)(<\/svg>)$/,
-  '$1<g transform="rotate(-35 9 16)">$2</g>$3'
+  '$1<g transform="rotate(-35 9 16)">$2</g>$3',
 );
 const SEND_ICON_SVG = monochromeIconSvg("paper-plane");
 const REPEAT_ICON_SVG = monochromeIconSvg("rotate");
@@ -86,6 +86,27 @@ const ANTHROPIC_LOGO_SVG = readIconFile("anthropic")
   .trim();
 
 const MOSS_LOGO_SOURCE_SVG = readIconFile("moss-logo-v2");
+
+// A favicon needs a compact square glyph, not the wide 79x19 wordmark the headers use (a
+// browser tab squeezes it into ~16px either way, where the "moss" lettering would be
+// illegible) — so this pulls out just the icon-mark path (the lone fill-rule="evenodd" one,
+// no wordmark letters) and drops it onto a small rounded-square badge, echoing the badge
+// treatment the dashboard header itself used before the header-unification pass.
+const FAVICON_ICON_PATH_D = (() => {
+  const match = MOSS_LOGO_SOURCE_SVG.match(
+    /fill-rule="evenodd" clip-rule="evenodd" d="([^"]+)" fill="currentColor"/,
+  );
+  if (!match) throw new Error("moss-logo-v2.svg: icon-mark path not found");
+  return match[1];
+})();
+const FAVICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">' +
+  '<rect width="24" height="24" rx="5" fill="#002414"/>' +
+  `<path fill-rule="evenodd" clip-rule="evenodd" transform="translate(1,2.5)" d="${FAVICON_ICON_PATH_D}" fill="#ffffff"/>` +
+  "</svg>";
+// base64, not a URL-encoded data URI — sidesteps having to escape the quotes/#/whitespace an
+// SVG string like this is full of.
+const FAVICON_LINK_TAG = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,${Buffer.from(FAVICON_SVG).toString("base64")}" />`;
 
 // Single-instance lock. Add/change/remove key no longer relaunches the process (see
 // applyProviderKeys), so this mainly guards a simpler case now: a previous session's
@@ -125,7 +146,9 @@ async function killStalePreviousInstance() {
   const pid = parseInt(readFileSync(PID_FILE, "utf8").trim(), 10);
   if (!pid || pid === process.pid) return;
   if (!isProcessAlive(pid) || !looksLikeOurServer(pid)) return;
-  console.warn(`Stopping a previous instance of this app still running (pid ${pid})...`);
+  console.warn(
+    `Stopping a previous instance of this app still running (pid ${pid})...`,
+  );
   try {
     process.kill(pid, "SIGTERM");
   } catch {
@@ -2088,11 +2111,22 @@ async function loadIndexHtml() {
   // The header's per-provider status chips need to know what's actually connected — never
   // the real key, only whether one exists and its masked form (see maskKey above).
   const providers = JSON.stringify({
-    anthropic: { connected: ANTHROPIC_ENABLED, masked: ANTHROPIC_ENABLED ? maskKey(KEY) : null },
-    openai: { connected: OPENAI_ENABLED, masked: OPENAI_ENABLED ? maskKey(OPENAI_KEY) : null },
+    anthropic: {
+      connected: ANTHROPIC_ENABLED,
+      masked: ANTHROPIC_ENABLED ? maskKey(KEY) : null,
+    },
+    openai: {
+      connected: OPENAI_ENABLED,
+      masked: OPENAI_ENABLED ? maskKey(OPENAI_KEY) : null,
+    },
   }).replace(/</g, "\\u003c");
   inject.push(`window.__ATS_PROVIDERS__=${providers};`);
-  const withInject = html.replace("</head>", `<script>${inject.join("")}</script></head>`);
+  const withInject = html
+    .replace("</head>", `<script>${inject.join("")}</script></head>`)
+    // index.html has no <link rel="icon"> of its own — sourced from the same moss-logo-v2.svg
+    // file as everything else now (see FAVICON_SVG above) rather than a separately maintained
+    // copy, so the tab icon and the header logo can never quietly drift apart.
+    .replace("</head>", `${FAVICON_LINK_TAG}</head>`);
   // Same wordmark asset (icon + "moss" letters, one vector graphic) the white nav-bar
   // (setupPageHtml/onboardingGuideHtml, MOSS_WORDMARK_SVG below) renders — unifies the two
   // headers' logo to identical proportions instead of this one being a separately-sized
@@ -2158,11 +2192,9 @@ const PROVIDER_COPY = {
     badgeFg: "#265f4f",
     intro:
       "This dashboard reads Anthropic's Claude Enterprise Analytics API to show your Claude spend, usage and adoption.",
-    selfBlurb:
-      "Takes about 2 minutes if you're the primary owner of your Anthropic organization.",
-    delegateBlurb:
-      "We'll draft a message you can send to your organization's primary owner.",
     consoleUrl: "https://claude.ai/admin-settings/api-access",
+    helpGuideUrl: "https://support.claude.com/en/articles/15330651-claude-enterprise-admin-api-reference-guide?utm_source=chatgpt.com",
+    helpGuideLabel: "Claude Admin API key guide",
     keyPrefix: "sk-ant-",
     steps: [
       {
@@ -2173,7 +2205,6 @@ const PROVIDER_COPY = {
       { text: "Create an Analytics API key, then copy it and paste it below." },
     ],
     fieldLabelSelf: "Anthropic Analytics API key",
-    fieldLabelDelegate: "Once you have the key, paste it here",
     reservedNote:
       "This key only grants read:analytics access — it can read usage and cost data but can't make any changes to your account.",
     delegateIntro: "Send this to your organization's primary owner:",
@@ -2183,12 +2214,12 @@ const PROVIDER_COPY = {
     permissionErrorMsg:
       "This Anthropic key doesn't have the right access. Ask whoever created it to generate an Analytics API key, not a regular API key.",
     requestMessage:
-      "Hi — I'm setting up AI Spend Control to track our Anthropic (Claude) spend. Could you create an Analytics API key for our organization? (Only the primary owner of the organization can do this.)\n\n" +
-      "1. Go to https://claude.ai/admin-settings/api-access\n" +
-      "2. Turn on public API access if it isn't already\n" +
-      "3. Create an Analytics API key\n" +
-      "4. Copy the key and send it to me somewhere secure\n\n" +
-      "This key only grants read:analytics access — it can't make any changes to the account.",
+      "Hi, I'm setting up Moss AI Token Cost Tracker, a local finance tool provided by Moss (a German fintech company) to compare AI token costs across providers. Could you create an Analytics API key for our Anthropic organisation?\n\n" +
+      "1. Go to https://claude.ai/admin-settings/api-access\n\n" +
+      "2. Turn on public API access if needed.\n\n" +
+      "3. Create an Analytics API key.\n\n" +
+      "4. Copy the key and share it with me securely.\n\n" +
+      "The key only grants read access and cannot make changes. It stays on my device and is never sent to Moss. I can also share the GitHub code for review.",
   },
   openai: {
     title: "Add OpenAI (ChatGPT) Admin API key",
@@ -2198,21 +2229,18 @@ const PROVIDER_COPY = {
     badgeFg: "#5b5858",
     intro:
       "Add this to see combined spend across both providers. You can always add it later from settings.",
-    selfBlurb:
-      "Takes about 2 minutes if you have admin access to the OpenAI Platform.",
-    delegateBlurb:
-      "We'll draft a message you can send to whoever manages your OpenAI account.",
     consoleUrl: "https://platform.openai.com/settings/organization/admin-keys",
+    helpGuideUrl: "https://help.openai.com/en/articles/20001407?utm_source=chatgpt.com",
+    helpGuideLabel: "OpenAI Admin key guide",
     keyPrefix: "sk-",
     steps: [
       { text: "Go to your OpenAI Platform admin keys page.", chip: true },
       { text: "Click <b>Create new admin key</b>." },
       {
-        text: "If it asks you to choose permissions, select <b>Read only</b> — then copy the key and paste it below either way.",
+        text: "If it asks you to choose permissions, select <b>Read only</b> - then copy the key and paste it below either way.",
       },
     ],
     fieldLabelSelf: "OpenAI Admin API key",
-    fieldLabelDelegate: "Once you have the key, paste it here",
     reservedNote:
       "If you were able to choose Read only permissions, this key can only read spend and usage data — nothing can be changed with it.",
     delegateIntro: "Send this to whoever manages your OpenAI account:",
@@ -2222,11 +2250,12 @@ const PROVIDER_COPY = {
     permissionErrorMsg:
       "This OpenAI key doesn't have Admin permissions. Ask whoever created it to generate an Admin API key, not a standard API key.",
     requestMessage:
-      "Hi — I'm setting up AI Spend Control to track our OpenAI (ChatGPT) spend. Could you create an Admin API key for our organization?\n\n" +
-      "1. Go to https://platform.openai.com/settings/organization/admin-keys\n" +
-      '2. Click "Create new admin key"\n' +
-      '3. If it asks you to choose permissions, select "Read only" — this key is only used to read spend/usage data\n' +
-      "4. Copy the key and send it to me somewhere secure",
+      "Hi, I'm setting up Moss AI Token Cost Tracker, a local finance tool provided by Moss (a German fintech company) to compare AI token costs across providers. Could you create an Admin API key for our OpenAI organisation?\n\n" +
+      "1. Go to https://platform.openai.com/settings/organization/keys\n\n" +
+      '2. Click "Create new admin key".\n\n' +
+      '3. Select "Read only" if asked to choose permissions.\n\n' +
+      "4. Copy the key and share it with me securely.\n\n" +
+      "The key is only used to read spend and usage data. It stays on my device and is never sent to Moss. I can also share the GitHub code for review.",
   },
 };
 
@@ -2279,9 +2308,9 @@ export function setupPageCopy(mode) {
     };
   }
   return {
-    title: "Connect your AI providers",
+    title: "Connect your AI providers via API keys",
     subtitle:
-      "Connect at least one provider to see your spend. Add both to combine spend across providers.",
+      "Connect one provider to view its spend. Connect both to combine and compare spend across providers.",
     cards: ["anthropic", "openai"],
     buttonLabel: "Open dashboard",
   };
@@ -2324,25 +2353,22 @@ const SETUP_CLIENT_SCRIPT = `
     }
 
     const state = {
-      anthropic: { path: null, key: '', status: 'idle', error: '', reveal: false, copied: false },
-      openai: { path: null, key: '', status: 'idle', error: '', reveal: false, copied: false },
+      anthropic: { key: '', status: 'idle', error: '', reveal: false, copied: false, showDelegate: false },
+      openai: { key: '', status: 'idle', error: '', reveal: false, copied: false, showDelegate: false },
       saving: false,
     };
 
     function cardHeader(key) {
       const p = PROVIDERS[key];
       const s = state[key];
-      const showBack = s.status !== 'valid' && s.path !== null;
       const logoIcon = key === 'anthropic' ? 'anthropicLogo' : 'openaiLogo';
-      const left = showBack
-        ? '<button type="button" class="icon-back-btn" data-action="back">' + icon('chevronLeft', 16) + '</button>'
-        : '<div class="avatar" style="background:' + p.badgeBg + ';color:' + p.badgeFg + '">' + icon(logoIcon, 18) + '</div>';
+      const left = '<div class="avatar" style="background:' + p.badgeBg + ';color:' + p.badgeFg + '">' + icon(logoIcon, 18) + '</div>';
       const connectedTag = s.status === 'valid'
         ? '<div class="connected-tag">' + icon('check', 14) + '<span>Connected</span></div>'
         : '';
       return (
         '<div class="card-head">' + left +
-          '<div class="card-name">' + p.shortName + ' (' + (key === 'anthropic' ? 'Claude' : 'ChatGPT') + ')</div>' +
+          '<div class="card-name">' + (key === 'anthropic' ? 'Claude' : 'ChatGPT') + '</div>' +
           connectedTag +
         '</div>'
       );
@@ -2358,36 +2384,12 @@ const SETUP_CLIENT_SCRIPT = `
       );
     }
 
-    function choiceBlock(key) {
-      const p = PROVIDERS[key];
-      return (
-        '<div class="choice-list">' +
-          '<button type="button" class="choice-card choice-card-primary" data-action="path" data-path="self">' +
-            '<div class="choice-icon choice-icon-primary">' + icon('key', 26) + '</div>' +
-            '<div class="choice-body">' +
-              '<div class="choice-title">I can create this myself</div>' +
-              '<div class="choice-sub">' + p.selfBlurb + '</div>' +
-            '</div>' +
-            '<span class="chev">' + icon('chevronRight', 14) + '</span>' +
-          '</button>' +
-          '<button type="button" class="choice-card" data-action="path" data-path="delegate">' +
-            '<div class="choice-icon">' + icon('send', 14) + '</div>' +
-            '<div class="choice-body">' +
-              '<div class="choice-title">I need to ask someone else</div>' +
-              '<div class="choice-sub">' + p.delegateBlurb + '</div>' +
-            '</div>' +
-            '<span class="chev">' + icon('chevronRight', 14) + '</span>' +
-          '</button>' +
-        '</div>'
-      );
-    }
-
     function fieldSteps(key) {
       const p = PROVIDERS[key];
       return '<div class="field-steps">' + p.steps.map(function (step, i) {
         return (
           '<div class="field-step-row">' +
-            '<span class="field-step-num">' + (i + 1) + '</span>' +
+            '<span class="field-step-num">' + String(i + 1).padStart(2, '0') + '</span>' +
             '<span>' + (step.chip
               ? '<a class="step-link" href="' + p.consoleUrl + '" target="_blank" rel="noopener noreferrer">' + step.text + '</a>'
               : step.text) +
@@ -2409,6 +2411,7 @@ const SETUP_CLIENT_SCRIPT = `
           (s.status === 'checking' ? '<span class="key-spinner spin">' + icon('spinner', 14) + '</span>' : '') +
           '<button type="button" class="reveal-btn" data-action="reveal">' + icon(s.reveal ? 'eyeOff' : 'eye', 15) + '</button>' +
         '</div>' +
+        '<div class="key-format-hint">Example format: ' + p.keyPrefix + '&hellip;</div>' +
         '<div class="field-error' + (s.error ? '' : '-slot') + '" id="field-error-' + key + '">' + errHtml + '</div>'
       );
     }
@@ -2417,11 +2420,7 @@ const SETUP_CLIENT_SCRIPT = `
       return '<div class="field-note">' + icon('info', 12) + '<span>' + PROVIDERS[key].reservedNote + '</span></div>';
     }
 
-    function selfBlock(key) {
-      return fieldSteps(key) + keyField(key) + fieldNote(key);
-    }
-
-    function delegateBlock(key) {
+    function delegateMessageBlock(key) {
       const p = PROVIDERS[key];
       const s = state[key];
       return (
@@ -2429,25 +2428,36 @@ const SETUP_CLIENT_SCRIPT = `
         '<div class="message-card">' +
           '<div class="message-card-head">' +
             icon('send', 12) +
-            '<span class="message-card-title">Message for your admin</span>' +
+            '<span class="message-card-title">' + p.messageCardTitle + '</span>' +
             '<button type="button" class="copy-btn' + (s.copied ? ' copy-btn-done' : '') + '" data-action="copy">' +
               icon(s.copied ? 'check' : 'copy', 12) + '<span>' + (s.copied ? 'Copied' : 'Copy') + '</span>' +
             '</button>' +
           '</div>' +
           '<div class="message-card-body">' + escapeHtml(p.requestMessage) + '</div>' +
         '</div>' +
-        '<div class="reassurance">This message doesn&#39;t include your key or any account access.</div>' +
-        '<div class="field-label-line">' + p.fieldLabelDelegate + ':</div>' +
-        keyField(key)
+        '<div class="reassurance">This message doesn&#39;t include your key or any account access.</div>'
+      );
+    }
+
+    function selfBlock(key) {
+      const p = PROVIDERS[key];
+      const s = state[key];
+      return (
+        '<a class="help-center-link" href="' + p.helpGuideUrl + '" target="_blank" rel="noopener noreferrer"><span>' + p.helpGuideLabel + '</span>' + icon('externalLink', 12) + '</a>' +
+        fieldSteps(key) +
+        keyField(key) +
+        fieldNote(key) +
+        '<button type="button" class="delegate-toggle-btn" data-action="toggle-delegate">' + icon('send', 12) +
+          '<span>' + (s.showDelegate ? 'Hide the prewritten message' : 'Need to ask someone else? Get a prewritten message') + '</span>' +
+        '</button>' +
+        (s.showDelegate ? delegateMessageBlock(key) : '')
       );
     }
 
     function cardBody(key) {
       const s = state[key];
       if (s.status === 'valid') return connectedSummary(key);
-      if (s.path === 'self') return selfBlock(key);
-      if (s.path === 'delegate') return delegateBlock(key);
-      return choiceBlock(key);
+      return selfBlock(key);
     }
 
     function renderCard(key) {
@@ -2471,7 +2481,7 @@ const SETUP_CLIENT_SCRIPT = `
         const a = state.anthropic.status === 'valid';
         const o = state.openai.status === 'valid';
         canProceed = a || o;
-        hint = 'Connect at least one provider to continue.';
+        hint = '';
         if (a && o) hint = "You're all set.";
         else if (a) hint = 'Add OpenAI too for combined spend, or continue with just Anthropic.';
         else if (o) hint = 'Add Anthropic too for combined spend, or continue with just OpenAI.';
@@ -2487,21 +2497,10 @@ const SETUP_CLIENT_SCRIPT = `
       const s = state[key];
       const p = PROVIDERS[key];
 
-      el.querySelectorAll('[data-action="path"]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          s.path = btn.dataset.path;
-          renderCard(key);
-        });
-      });
-
-      const backBtn = el.querySelector('[data-action="back"]');
-      if (backBtn) backBtn.addEventListener('click', function () {
-        s.path = null;
-        s.key = '';
-        s.status = 'idle';
-        s.error = '';
+      const delegateToggleBtn = el.querySelector('[data-action="toggle-delegate"]');
+      if (delegateToggleBtn) delegateToggleBtn.addEventListener('click', function () {
+        s.showDelegate = !s.showDelegate;
         renderCard(key);
-        renderBottom();
       });
 
       const changeBtn = el.querySelector('[data-action="change"]');
@@ -2677,7 +2676,10 @@ const SETUP_CLIENT_SCRIPT = `
 // than needing every coordinate hand-multiplied — and recolored from currentColor to a
 // fixed near-black, since this nav bar sits on plain white with no ambient text color to
 // inherit the way index.html's dark app-bar badge does.
-const MOSS_WORDMARK_SVG = MOSS_LOGO_SOURCE_SVG.replace(/width="79"/, 'width="290"')
+const MOSS_WORDMARK_SVG = MOSS_LOGO_SOURCE_SVG.replace(
+  /width="79"/,
+  'width="290"',
+)
   .replace(/height="19"/, 'height="67"')
   .replace(/fill="currentColor"/g, 'fill="#131212"');
 
@@ -2708,9 +2710,11 @@ const ONBOARDING_CLIENT_SCRIPT = `
     }
 
     const state = {
-      screen: 0, // 0 = intro, 1 = step1, 2 = step2
+      // 0 = intro, 1 = step1, 2 = step2. INITIAL_SCREEN lets a "Back" link from /connect
+      // (which is a full page navigation, not a client-side route — this SPA's in-memory
+      // state.screen doesn't survive it) land back on step 2 instead of resetting to intro.
+      screen: (Number.isInteger(INITIAL_SCREEN) && INITIAL_SCREEN >= 0 && INITIAL_SCREEN <= 2) ? INITIAL_SCREEN : 0,
       tokenBoxOpen: false,
-      dataOpen: false,
       flipped: [false, false, false, false],
     };
 
@@ -2723,7 +2727,8 @@ const ONBOARDING_CLIENT_SCRIPT = `
       { color: "var(--green-550)", vals: [450, 20, 60, 610, 580, 620, 760, 550, 30, 60, 540, 600, 1010, 860, 700, 50, 90, 700, 810, 1060, 700, 760, 40, 130, 540, 750, 680, 586] },
     ];
     const CHART_MAX = 5000;
-    function chartX(i) { return 34 + (i * 666) / 27; }
+    const CHART_MARGIN_LEFT = 64;
+    function chartX(i) { return CHART_MARGIN_LEFT + (i * (700 - CHART_MARGIN_LEFT)) / 27; }
     function chartY(v) { return 200 - (v / CHART_MAX) * 188; }
 
     function chartSvg() {
@@ -2733,15 +2738,33 @@ const ONBOARDING_CLIENT_SCRIPT = `
         }).join("");
         return '<path class="chart-path" data-si="' + si + '" fill="none" stroke="' + s.color + '" stroke-width="1.8" stroke-linejoin="round"/>' + dots;
       }).join("");
+      const dayNames = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+      const today = new Date();
+      const dateLabels = [3, 7, 11, 15, 19, 23, 27].map(function (i) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - (27 - i));
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        const x = chartX(i).toFixed(1);
+        return (
+          '<text x="' + x + '" y="222" text-anchor="middle" font-family="inherit" font-size="9" font-weight="700" fill="var(--text-secondary)">' + dayNames[d.getDay()] + "</text>" +
+          '<text x="' + x + '" y="235" text-anchor="middle" font-family="inherit" font-size="9" fill="var(--text-label)">' + mm + "/" + dd + "</text>"
+        );
+      }).join("");
       return (
-        '<svg viewBox="0 0 760 220" style="width:100%;display:block">' +
+        '<svg viewBox="0 0 760 246" style="width:100%;display:block">' +
           '<g stroke="var(--gray-135)" stroke-width="1">' +
-            '<line x1="34" y1="12" x2="700" y2="12"/><line x1="34" y1="59" x2="700" y2="59"/>' +
-            '<line x1="34" y1="106" x2="700" y2="106"/><line x1="34" y1="153" x2="700" y2="153"/><line x1="34" y1="200" x2="700" y2="200"/>' +
+            '<line x1="' + CHART_MARGIN_LEFT + '" y1="12" x2="700" y2="12"/><line x1="' + CHART_MARGIN_LEFT + '" y1="59" x2="700" y2="59"/>' +
+            '<line x1="' + CHART_MARGIN_LEFT + '" y1="106" x2="700" y2="106"/><line x1="' + CHART_MARGIN_LEFT + '" y1="153" x2="700" y2="153"/><line x1="' + CHART_MARGIN_LEFT + '" y1="200" x2="700" y2="200"/>' +
           '</g>' +
           '<g font-family="inherit" font-size="10" fill="var(--text-secondary)" text-anchor="end">' +
-            '<text x="28" y="15">$5.0k</text><text x="28" y="203">0</text>' +
+            '<text x="' + (CHART_MARGIN_LEFT - 6) + '" y="15">$5.0k</text>' +
+            '<text x="' + (CHART_MARGIN_LEFT - 6) + '" y="62">$3,750.00</text>' +
+            '<text x="' + (CHART_MARGIN_LEFT - 6) + '" y="109">$2,500.00</text>' +
+            '<text x="' + (CHART_MARGIN_LEFT - 6) + '" y="156">$1,250.00</text>' +
+            '<text x="' + (CHART_MARGIN_LEFT - 6) + '" y="203">$0.00</text>' +
           '</g>' +
+          '<g>' + dateLabels + '</g>' +
           '<g id="chart-g">' + rows + "</g>" +
         "</svg>"
       );
@@ -2769,9 +2792,9 @@ const ONBOARDING_CLIENT_SCRIPT = `
     function legendRow() {
       return (
         '<div style="display:flex;gap:16px;align-items:center">' +
-          '<span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:999px;background:var(--gray-900);display:block"></span><span class="body-s" style="color:var(--text-secondary)">Overall</span></span>' +
-          '<span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:999px;background:var(--orange-550);display:block"></span><span class="body-s" style="color:var(--text-secondary)">Anthropic</span></span>' +
-          '<span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:999px;background:var(--green-550);display:block"></span><span class="body-s" style="color:var(--text-secondary)">ChatGPT</span></span>' +
+          '<span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:var(--gray-900);display:block"></span><span class="body-s" style="color:var(--text-secondary)">Overall</span></span>' +
+          '<span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:var(--orange-550);display:block"></span><span class="body-s" style="color:var(--text-secondary)">Claude</span></span>' +
+          '<span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:var(--green-550);display:block"></span><span class="body-s" style="color:var(--text-secondary)">ChatGPT</span></span>' +
         "</div>"
       );
     }
@@ -2806,32 +2829,28 @@ const ONBOARDING_CLIENT_SCRIPT = `
         '<div class="intro-grid fade-up">' +
           '<div style="display:flex;flex-direction:column;gap:28px;max-width:640px">' +
             '<div style="display:flex;flex-direction:column;gap:12px">' +
-              '<span class="eyebrow">AI Spend Radar</span>' +
-              '<p class="body-m" style="color:var(--text-secondary);margin:0">See who started the meter and what\\'s driving the bill.</p>' +
-              '<h2 style="letter-spacing:-0.01em">Start getting your company\\'s AI spend under control in 10 minutes</h2>' +
+              '<span class="eyebrow">Moss AI Token Cost Tracker</span>' +
+              '<h2 style="letter-spacing:-0.01em">Start tracking your company\\'s AI token costs in 10 minutes</h2>' +
               '<p class="body-l" style="color:var(--text-secondary);margin:0">We\\'ll guide you through what matters, then help you connect your data.</p>' +
             "</div>" +
             '<div style="display:flex;flex-direction:column;gap:16px">' +
-              introItem("1", "Get to know your AI spend", "See what makes up the bill, which numbers matter, and how to use them to investigate what changed.") +
-              introItem("2", "Get clear on your data", "See what the tool fetches, where your data stays, and which setup works best for you and your IT team.") +
-              introItem("3", "Get your providers connected", "Find the right admin keys, ask IT for help if needed, and bring Anthropic and ChatGPT into one view.") +
+              introItem("01", "Get to know your AI spend", "See what drives your AI bill and which numbers matter.") +
+              introItem("02", "Get clear on your data", "See what the tool retrieves and where your data stays.") +
+              introItem("03", "Get your providers connected", "Add your admin keys or ask an administrator to provide them.") +
             "</div>" +
             '<div style="display:flex;flex-direction:column;gap:16px">' +
-              '<p class="body-s" style="color:var(--text-secondary);margin:0">You can skip any step and return to it later.</p>' +
               '<div style="display:flex;align-items:center;gap:16px">' +
-                '<button type="button" data-action="start-guide" class="body-m-bold primary-btn">Put my AI spend on the radar ' + icon("chevronRight", 16) + "</button>" +
+                '<button type="button" data-action="start-guide" class="body-m-bold primary-btn">Start step 1 of 3 ' + icon("chevronRight", 16) + "</button>" +
                 '<button type="button" data-action="skip-guide" class="body-m ghost-btn" style="padding:8px 10px">Skip the guide and connect providers</button>' +
               "</div>" +
             "</div>" +
           "</div>" +
           '<div style="min-width:0;display:flex;align-items:center">' +
             '<div class="preview-card">' +
-              '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">' +
-                '<span class="body-m-bold">AI spend by provider</span><span class="body-s" style="color:var(--text-secondary)">Last 28 days</span>' +
+              '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border-default);padding-bottom:10px">' +
+                '<span class="body-m-bold" style="font-size:10px">AI token spend by provider</span>' + legendRow() +
               "</div>" +
-              legendRow() +
               chartSvg() +
-              '<span class="body-s" style="color:var(--text-secondary)">Example data. Your own spend appears here once connected.</span>' +
             "</div>" +
           "</div>" +
         "</div>"
@@ -2872,30 +2891,39 @@ const ONBOARDING_CLIENT_SCRIPT = `
         '<div class="content-col fade-up">' +
           '<div style="display:flex;flex-direction:column;gap:16px">' +
             '<span class="eyebrow">Get to know your AI spend</span>' +
-            '<h3>AI spend starts everywhere. The bill lands in finance.</h3>' +
+            '<h3>AI token costs can start anywhere. The bill lands in finance.</h3>' +
             '<div class="callout">' +
               '<span class="eyebrow" style="color:var(--ui-moss-700)">The finance problem</span>' +
-              '<span class="body-m" style="color:var(--ui-moss-900)">With AI, companies pay for seats plus usage that any employee or automated workflow can trigger across providers.</span>' +
-              '<span class="body-m" style="color:var(--ui-moss-900)">Finance needs <strong>(1)</strong> one view of how total AI costs are developing and <strong>(2)</strong> a clear way to trace what is driving the bill.</span>' +
+              '<span class="body-m" style="color:var(--ui-moss-900)">AI token costs are hard to follow because ChatGPT and Claude have separate reports that were not built for finance, and any employee or automated workflow can add usage costs on top of seats.</span>' +
+              '<span class="body-m" style="color:var(--ui-moss-900)">Finance needs <strong>(1)</strong> one place to track how AI token costs develop and <strong>(2)</strong> one clear way to see what drives AI token costs.</span>' +
             "</div>" +
           "</div>" +
 
           '<div style="display:flex;flex-direction:column;gap:24px">' +
             '<div style="display:flex;align-items:center;gap:10px">' +
-              '<span class="step-digit">01</span><h5>One combined view of how your AI costs develop</h5>' +
+              '<span class="step-digit">01</span><h5>One place to track how AI token costs develop</h5>' +
             "</div>" +
             '<div class="build-row">' +
-              buildItem("dollar", "Token cost", "Provider, model and token type determine the rate") +
-              buildItem("send", "Usage", "More requests from people and agents") +
-              buildItem("teams", "Adoption", "More people using AI") +
+              buildItem("dollar", "Token cost", "The price depends on the provider, model and token type") +
+              buildItem("send", "Usage", "The number of requests sent by people and automated workflows.") +
+              buildItem("teams", "Adoption", "The number of people actively using AI tools each day") +
             "</div>" +
             '<div style="display:flex;flex-direction:column;gap:8px">' +
               '<div class="preview-card" style="padding:16px 20px">' +
                 '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border-default);padding-bottom:10px">' +
-                  '<span class="body-m-bold">AI spend by provider &middot; Last 28 days</span>' + legendRow() +
+                  '<span class="body-m-bold">AI token spend by provider &middot; Last 28 days</span>' + legendRow() +
                 "</div>" +
                 chartSvg() +
-                '<span class="body-s" style="color:var(--text-secondary)">Example data. Your own spend appears here once connected.</span>' +
+              "</div>" +
+              '<div class="chart-controls-row">' +
+                '<div class="segmented">' +
+                  '<button type="button" aria-selected="true">Cost</button>' +
+                  '<button type="button" aria-selected="false">Usage</button>' +
+                  '<button type="button" aria-selected="false">Adoption</button>' +
+                "</div>" +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+                  tagPill("AI model") + tagPill("Product") + tagPill("Team") + tagPill("Top spender") + tagPill("Workflow") +
+                "</div>" +
               "</div>" +
             "</div>" +
           "</div>" +
@@ -2903,21 +2931,21 @@ const ONBOARDING_CLIENT_SCRIPT = `
           '<div style="display:flex;flex-direction:column;gap:16px">' +
             '<div style="display:flex;flex-direction:column;gap:4px">' +
               '<div style="display:flex;align-items:center;gap:10px">' +
-                '<span class="step-digit">02</span><h5>Identify what drove the cost</h5>' +
+                '<span class="step-digit">02</span><h5>One clear way to see what drives AI token costs</h5>' +
               "</div>" +
-              '<p class="body-s" style="color:var(--text-secondary);margin:0">Flip each card to see how it can move the meter.</p>' +
+              '<p class="body-s" style="color:var(--text-secondary);margin:0">Flip each card to see how each influences AI token costs.</p>' +
             "</div>" +
             '<div class="flip-grid">' +
-              flipCard(0, "addons", "Product category", "Different tools and use cases create different usage patterns. Automated products can send far more requests than everyday chat.") +
-              flipCard(1, "sparkles", "AI model", "Requests can stay flat while spend rises when usage shifts to a more expensive model.", 28) +
-              flipCard(2, "teams", "Team and top spender", "Long sessions and repeated retries can raise spend, but individual usage should always be viewed in the context of the person\\'s role and team.") +
-              flipCard(3, "key", "API key and workflow", "A single automated workflow or runaway loop can generate large volumes of requests without anyone actively using AI.", 36) +
+              flipCard(0, "addons", "Provider", "AI providers charge different token prices, so the tools teams use most directly shape total AI token costs.") +
+              flipCard(1, "sparkles", "AI model", "Models differ in price and capability. Using a more powerful model than the task requires can increase costs without adding value.", 28) +
+              flipCard(2, "teams", "Teams and top spenders", "Token use varies by person and team. High usage may reflect valuable work or inefficient habits, so it should be judged in context.") +
+              flipCard(3, "key", "API key and workflow", "Automated workflows run without someone clicking each time. An AI agent caught in a loop can quickly generate requests and increase token costs.", 36) +
             "</div>" +
           "</div>" +
 
           '<div class="collapsible">' +
             '<button type="button" data-action="toggle-token" class="collapsible-head">' + icon("questionmark", 20) +
-              '<span class="body-m-bold" style="flex:1">Token concepts and pricing explained in one minute</span>' +
+              '<span class="body-m-bold" style="flex:1">A quick guide to AI tokens and pricing</span>' +
               '<span id="token-chevron">' + icon(state.tokenBoxOpen ? "chevronUp" : "chevronDown", 16) + "</span>" +
             "</button>" +
             '<div class="collapsible-wrap" id="token-collapsible-wrap" style="max-height:' + (state.tokenBoxOpen ? "2000px" : "0") + '">' +
@@ -2925,11 +2953,11 @@ const ONBOARDING_CLIENT_SCRIPT = `
             "</div>" +
           "</div>" +
 
-          '<div class="footer-nav">' +
-            '<button type="button" data-action="back" class="body-m secondary-btn">' + icon("chevronLeft", 16) + " Back</button>" +
-            '<button type="button" data-action="next" class="body-m-bold primary-btn">Continue: Get clear on your data ' + icon("chevronRight", 16) + "</button>" +
-          "</div>" +
-        "</div>"
+        "</div>" +
+        '<div class="footer-nav"><div class="footer-nav-inner">' +
+          '<button type="button" data-action="back" class="body-m secondary-btn">' + icon("chevronLeft", 16) + " Back</button>" +
+          '<button type="button" data-action="next" class="body-m-bold primary-btn">Continue to Step 02 ' + icon("chevronRight", 16) + "</button>" +
+        "</div></div>"
       );
     }
 
@@ -2938,49 +2966,43 @@ const ONBOARDING_CLIENT_SCRIPT = `
         '<div style="display:flex;align-items:center;gap:12px;text-align:left">' +
           '<span class="build-icon">' + icon(iconName, 16) + "</span>" +
           '<div style="display:flex;flex-direction:column;gap:2px;min-width:0">' +
-            '<span class="eyebrow">' + label + '</span><span class="body-m-bold">' + desc + "</span>" +
+            '<span class="eyebrow">' + label + '</span><span class="body-m-bold" style="font-size:12px">' + desc + "</span>" +
           "</div>" +
         "</div>"
       );
+    }
+
+    function tagPill(text) {
+      return '<span class="tag-pill">' + text + "</span>";
     }
 
     function tokenBoxBody() {
       return (
         '<div class="collapsible-body">' +
-          '<p class="body-m" style="color:var(--text-secondary);margin:0">This explains the variable token part of the bill. Seat fees are charged separately.</p>' +
+          '<p class="body-m" style="color:var(--text-secondary);margin:0">Here\\'s the simple version: seat fees are fixed, while AI token costs change with how much AI your company uses.</p>' +
           '<div style="display:flex;flex-direction:column;gap:10px">' +
-            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Tokens:</strong> <span style="color:var(--text-secondary)">They are the pieces of text an AI model processes, but they do not map neatly to words: as a rough guide, 100 tokens equal around 75 English words.</span></p>' +
-            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Input tokens:</strong> <span style="color:var(--text-secondary)">Everything sent to the model, including the prompt, instructions, files and previous context. More context means more billable input.</span></p>' +
-            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Cached input tokens:</strong> <span style="color:var(--text-secondary)">Repeated input that the provider can reuse instead of processing again. Cache reads are usually cheaper, although some providers charge separately to create the cache.</span></p>' +
-            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Output tokens:</strong> <span style="color:var(--text-secondary)">Everything the model generates. Output tokens are usually priced higher than input tokens.</span></p>' +
-            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Price per 1 million tokens:</strong> <span style="color:var(--text-secondary)">The unit rate applied to each token type. The rate changes depending on the provider and model used.</span></p>' +
+            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Tokens:</strong> <span style="color:var(--text-secondary)">Tokens are small pieces of text that an AI model reads and writes. They do not match words exactly, but as a rough guide, 100 tokens are about 75 English words.</span></p>' +
+            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Input tokens:</strong> <span style="color:var(--text-secondary)">Everything sent to the model, including the prompt, instructions, files and earlier parts of the conversation.</span></p>' +
+            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Cached input tokens:</strong> <span style="color:var(--text-secondary)">Input the provider can reuse instead of processing it again. Reusing it is usually cheaper, although creating the cache may cost extra.</span></p>' +
+            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Output tokens:</strong> <span style="color:var(--text-secondary)">Everything the model sends back. Output tokens usually cost more than input tokens.</span></p>' +
+            '<p class="body-m" style="margin:0"><strong style="font-weight:500">Price per 1 million tokens:</strong> <span style="color:var(--text-secondary)">The price charged for one million tokens. It changes depending on the provider, model and token type.</span></p>' +
           "</div>" +
           '<div class="formula-box">' +
-            '<span class="body-m" style="color:var(--ui-moss-900)">For usage priced by tokens, providers commonly calculate the token cost of a request like this:</span>' +
+            '<span class="body-m" style="color:var(--ui-moss-900)">This is the core calculation</span>' +
             '<div style="display:flex;flex-direction:column;gap:4px">' +
-              '<span class="body-m-bold" style="color:var(--ui-moss-900)">(input tokens &divide; 1,000,000 &times; input rate)</span>' +
-              '<span class="body-m-bold" style="color:var(--ui-moss-900)">+ (cached input tokens &divide; 1,000,000 &times; cached-input rate)</span>' +
-              '<span class="body-m-bold" style="color:var(--ui-moss-900)">+ (output tokens &divide; 1,000,000 &times; output rate)</span>' +
-              '<span class="body-m-bold" style="color:var(--ui-moss-700)">= token cost for the request</span>' +
+              '<span class="body-m-bold" style="color:var(--ui-moss-900)">(Input tokens &divide; 1,000,000 &times; input price)</span>' +
+              '<span class="body-m-bold" style="color:var(--ui-moss-900)">+ (Cached input tokens &divide; 1,000,000 &times; cached-input price)</span>' +
+              '<span class="body-m-bold" style="color:var(--ui-moss-900)">+ (Output tokens &divide; 1,000,000 &times; output price)</span>' +
+              '<span class="body-m-bold" style="color:var(--ui-moss-700)">&rarr; AI token cost for the request</span>' +
             "</div>" +
+            '<span class="body-s" style="color:var(--ui-moss-900)">There can be a few extra charges, such as cache creation, reasoning or long context, depending on the provider and model.</span>' +
           "</div>" +
-          '<p class="body-s" style="color:var(--text-secondary);margin:0">This is the core calculation. Depending on the provider and model, cache creation, reasoning, long context and other features may add separate charges.</p>' +
-        "</div>"
-      );
-    }
-
-    function dataBoxBody() {
-      return (
-        '<div class="collapsible-body">' +
-          '<p class="body-m" style="color:var(--text-secondary);margin:0">Alternatively, you can use the public GitHub version. The security level is the same: both follow the same local data flow, and Moss never receives or stores your API keys, personal or spend data.</p>' +
-          '<p class="body-m" style="color:var(--text-secondary);margin:0">The one advantage is that your IT or engineering team can inspect the code and verify exactly what happens to your keys and data. It requires Node.js, a terminal and technical support to set up.</p>' +
-          '<a href="https://github.com/getmoss" target="_blank" rel="noopener noreferrer" class="body-m" style="display:flex;align-items:center;gap:6px">View the GitHub repository ' + icon("externalLink", 12) + "</a>" +
         "</div>"
       );
     }
 
     function retrieveRow(ok, text) {
-      return '<div style="display:flex;gap:8px">' + icon(ok ? "check" : "crossSmall", 14) + '<span class="body-m" style="color:var(--text-secondary)">' + text + "</span></div>";
+      return '<div style="display:flex;gap:8px">' + '<span style="color:' + (ok ? "var(--green-450)" : "var(--red-550)") + '">' + icon(ok ? "check" : "crossSmall", 14) + "</span>" + '<span class="body-m" style="color:var(--text-secondary)">' + text + "</span></div>";
     }
 
     function step2Screen() {
@@ -2989,53 +3011,41 @@ const ONBOARDING_CLIENT_SCRIPT = `
           '<div style="display:flex;flex-direction:column;gap:16px">' +
             '<span class="eyebrow">Get clear on your data</span>' +
             '<h3>Your data stays between your device and your AI providers.</h3>' +
-            '<p class="body-m" style="color:var(--text-secondary);margin:0">AI Spend Radar opens in your browser but runs on your computer. Moss never receives or stores your API keys or spend data.</p>' +
           "</div>" +
 
-          '<div class="two-col">' +
-            '<div class="advantage-card">' +
-              '<div style="display:flex;align-items:center;gap:10px">' + icon("shield", 20) + '<h6>Advantages of this local tool</h6></div>' +
-              '<div style="display:flex;flex-direction:column;gap:10px">' +
-                bulletRow("Runs entirely on your computer") + bulletRow("Connects directly to each provider") +
-                bulletRow("Keeps your API keys on your device") + bulletRow("Processes all returned data locally") +
-                bulletRow("Sends no keys or spend data to Moss") +
-              "</div>" +
+          '<div class="advantage-card">' +
+            '<div style="display:flex;align-items:center;gap:10px">' + icon("shield", 20) + '<h6>Advantages of this local tool</h6></div>' +
+            '<div style="display:flex;flex-direction:column;gap:10px">' +
+              bulletRow("Moss never receives or stores your API keys or spend data.", true) + bulletRow("Runs locally and connects directly to your AI providers.") +
+              bulletRow("Processes provider data on your computer.") +
+              bulletRow("Your IT team can inspect the GitHub code to verify how keys and data are handled.") +
             "</div>" +
-            '<div class="col-divider"></div>' +
-            '<div style="display:flex;flex-direction:column;gap:16px">' +
-              '<div style="display:flex;align-items:center;gap:10px">' + icon("search", 20) + '<h6>What the application retrieves</h6></div>' +
+          "</div>" +
+          '<div style="display:flex;flex-direction:column;gap:16px">' +
+            '<div style="display:flex;align-items:center;gap:10px">' + icon("search", 20) + '<h6>What the application retrieves</h6></div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">' +
               '<div style="display:flex;flex-direction:column;gap:8px">' +
                 '<span class="eyebrow" style="color:var(--text-label)">Retrieves</span>' +
-                retrieveRow(true, "Spend, requests and adoption") + retrieveRow(true, "Products and models") +
-                retrieveRow(true, "Teams and users") + retrieveRow(true, "API key and workflow usage") + retrieveRow(true, "Seat utilisation, where available") +
+                retrieveRow(true, "AI token costs, requests and adoption") + retrieveRow(true, "Providers, products and models") +
+                retrieveRow(true, "Teams, users, API keys and workflows") +
               "</div>" +
               '<div style="display:flex;flex-direction:column;gap:8px">' +
                 '<span class="eyebrow" style="color:var(--text-label)">Does not retrieve</span>' +
-                retrieveRow(false, "Prompts or instructions") + retrieveRow(false, "Model responses") + retrieveRow(false, "Conversation content") +
+                retrieveRow(false, "Prompts or instructions") + retrieveRow(false, "Model responses or conversations") + retrieveRow(false, "Files or internal documents") +
               "</div>" +
             "</div>" +
           "</div>" +
 
-          '<div class="collapsible">' +
-            '<button type="button" data-action="toggle-data" class="collapsible-head">' + icon("code", 20) +
-              '<span class="body-m-bold" style="flex:1">Still have security concerns? Let your IT team verify the setup.</span>' +
-              '<span id="data-chevron">' + icon(state.dataOpen ? "chevronUp" : "chevronDown", 16) + "</span>" +
-            "</button>" +
-            '<div class="collapsible-wrap" id="data-collapsible-wrap" style="max-height:' + (state.dataOpen ? "2000px" : "0") + '">' +
-              dataBoxBody() +
-            "</div>" +
-          "</div>" +
-
-          '<div class="footer-nav">' +
-            '<button type="button" data-action="back" class="body-m secondary-btn">' + icon("chevronLeft", 16) + " Back</button>" +
-            '<button type="button" data-action="next" class="body-m-bold primary-btn">Continue: Get your providers connected ' + icon("chevronRight", 16) + "</button>" +
-          "</div>" +
-        "</div>"
+        "</div>" +
+        '<div class="footer-nav"><div class="footer-nav-inner">' +
+          '<button type="button" data-action="back" class="body-m secondary-btn">' + icon("chevronLeft", 16) + " Back</button>" +
+          '<button type="button" data-action="next" class="body-m-bold primary-btn">Continue to Step 03 ' + icon("chevronRight", 16) + "</button>" +
+        "</div></div>"
       );
     }
 
-    function bulletRow(text) {
-      return '<div style="display:flex;gap:10px"><span class="bullet-dot"></span><span class="body-m" style="color:var(--text-secondary)">' + text + "</span></div>";
+    function bulletRow(text, strong) {
+      return '<div style="display:flex;gap:10px"><span class="bullet-dot"></span><span class="' + (strong ? "body-m-bold" : "body-m") + '" style="color:' + (strong ? "var(--ui-moss-700)" : "var(--text-secondary)") + '">' + text + "</span></div>";
     }
 
     function render() {
@@ -3086,10 +3096,6 @@ const ONBOARDING_CLIENT_SCRIPT = `
         state.tokenBoxOpen = !state.tokenBoxOpen;
         toggleCollapsible(state.tokenBoxOpen, "token-collapsible-wrap", "token-chevron");
       });
-      on("toggle-data", function () {
-        state.dataOpen = !state.dataOpen;
-        toggleCollapsible(state.dataOpen, "data-collapsible-wrap", "data-chevron");
-      });
       root.querySelectorAll('[data-action="flip"]').forEach(function (el) {
         el.addEventListener("click", function () {
           const i = Number(el.dataset.i);
@@ -3107,12 +3113,13 @@ const ONBOARDING_CLIENT_SCRIPT = `
     render();
 `;
 
-function onboardingGuideHtml() {
+function onboardingGuideHtml(initialScreen) {
   return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
-<title>AI Spend Radar — Setup guide</title>
+<title>Moss: AI Token Cost Tracker</title>
+${FAVICON_LINK_TAG}
 <style>
   * { box-sizing: border-box; }
   :root {
@@ -3125,6 +3132,7 @@ function onboardingGuideHtml() {
     --ui-moss-450: #389477; --ui-moss-550: #2B765F; --ui-moss-700: #265F4F; --ui-moss-800: #234F43; --ui-moss-900: #204138;
     --orange-110: #FEF5EF; --orange-150: #F8D5B5; --orange-450: #EB7515; --orange-550: #CC6816; --orange-900: #5C2B06;
     --green-450: #68A83D; --green-550: #458223;
+    --red-550: #C13B32;
     --beige-100: #F7F8F5;
     --text-primary: var(--black); --text-secondary: var(--gray-550); --text-link: #1F70CC; --text-label: var(--gray-450);
     --border-default: var(--gray-135); --border-field: var(--gray-150);
@@ -3158,7 +3166,7 @@ function onboardingGuideHtml() {
 
   .page-body { max-width: 1240px; margin: 0 auto; padding: 32px; }
   .intro-grid { display: grid; grid-template-columns: minmax(0,1fr) 504px; gap: 48px; }
-  .content-col { display: flex; flex-direction: column; gap: 28px; max-width: 860px; margin: 0 auto; }
+  .content-col { display: flex; flex-direction: column; gap: 28px; max-width: 860px; margin: 0 auto; padding-bottom: 96px; }
 
   .step-num { width: 40px; height: 40px; flex: none; border-radius: var(--radius-max); background: var(--ui-moss-120); color: var(--ui-moss-700); display: flex; align-items: center; justify-content: center; font: 600 14px/1 var(--font); }
   .step-digit { flex: none; font: 700 20px/1 var(--font); color: var(--ui-moss-700); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
@@ -3170,6 +3178,13 @@ function onboardingGuideHtml() {
   .secondary-btn:hover { background: var(--gray-110); }
 
   .preview-card { width: 100%; box-sizing: border-box; background: var(--white); border: 1px solid var(--border-default); border-radius: var(--radius-8); padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+
+  .chart-controls-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .segmented { display: inline-flex; align-items: center; padding: 4px; border-radius: var(--radius-8); background: var(--gray-110); border: 1px solid var(--border-default); }
+  .segmented button { border: 0; background: transparent; color: var(--text-secondary); min-height: 29px; padding: 6px 12px; border-radius: var(--radius-6); cursor: pointer; font-family: var(--font); font-size: 12px; font-weight: 680; }
+  .segmented button:hover { color: var(--text-primary); }
+  .segmented button[aria-selected="true"] { color: var(--text-primary); background: var(--white); box-shadow: 0 1px 5px rgba(23, 32, 29, 0.1); }
+  .tag-pill { display: inline-flex; align-items: center; background: var(--ui-moss-700); color: var(--white); border-radius: var(--radius-max); padding: 8px 16px; font-size: 12px; font-weight: 600; }
 
   .build-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; align-items: flex-start; }
   .build-row > div:not(:first-child) { border-left: 1px solid var(--border-default); padding-left: 24px; }
@@ -3191,30 +3206,30 @@ function onboardingGuideHtml() {
   .collapsible-body { padding: 4px 20px 20px 52px; display: flex; flex-direction: column; gap: 16px; }
   .formula-box { background: var(--ui-moss-120); border-radius: var(--radius-6); padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
 
-  .footer-nav { border-top: 1px solid var(--border-default); padding-top: 24px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+  .footer-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; background: var(--white); border-top: 1px solid var(--border-default); padding: 0 32px; height: 64px; display: flex; align-items: center; }
+  .footer-nav-inner { width: 100%; max-width: 860px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 
-  .two-col { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 32px; align-items: start; }
   .advantage-card { background: var(--white); border: 1px solid var(--ui-moss-200); border-radius: var(--radius-8); padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
-  .col-divider { background: var(--border-default); width: 1px; align-self: stretch; }
   .bullet-dot { width: 5px; height: 5px; border-radius: var(--radius-max); background: var(--ui-moss-550); flex: none; margin-top: 8px; }
 
   @media (max-width: 900px) {
     .intro-grid { grid-template-columns: 1fr; }
-    .two-col { grid-template-columns: 1fr; }
-    .col-divider { display: none; }
     .flip-grid { grid-template-columns: repeat(2,1fr); }
     .build-row { grid-template-columns: 1fr; }
     .build-row > div:not(:first-child) { border-left: none; padding-left: 0; }
   }
 
-  .demo-banner { text-align: center; padding: 10px 24px; background: var(--orange-110); border-bottom: 1px solid var(--orange-150); color: var(--orange-900); font: 600 13px/18px var(--font); }
+  .demo-banner { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px 24px; background: var(--orange-110); border-bottom: 1px solid var(--orange-150); color: var(--orange-900); font: 600 13px/18px var(--font); }
+  .demo-banner-close { flex: none; border: 0; background: none; padding: 0; color: inherit; font: inherit; font-size: 16px; line-height: 1; cursor: pointer; opacity: 0.7; }
+  .demo-banner-close:hover { opacity: 1; }
 </style>
 </head>
 <body>
-  ${MOCK_MODE ? '<div class="demo-banner">Demo mode — no real API keys needed. When you reach the connect step, enter anything (e.g. &ldquo;demo&rdquo;) to continue; all data shown is mocked.</div>' : ""}
+  ${MOCK_MODE ? '<div class="demo-banner"><span>Demo mode - no real API keys needed. Enter "demo" at the connection step. All data shown is mocked.</span><button type="button" class="demo-banner-close" aria-label="Dismiss" onclick="this.closest(\'.demo-banner\').remove()">&times;</button></div>' : ""}
   <div id="root"></div>
   <script>
     const MOSS_WORDMARK = ${JSON.stringify(MOSS_WORDMARK_SVG)};
+    const INITIAL_SCREEN = ${JSON.stringify(initialScreen ?? null)};
   </script>
   <script>${ONBOARDING_CLIENT_SCRIPT}</script>
 </body>
@@ -3239,7 +3254,8 @@ function setupPageHtml(changeProvider) {
 <html>
 <head>
 <meta charset="utf-8" />
-<title>AI Spend Control — Setup</title>
+<title>Moss: AI Token Cost Tracker</title>
+${FAVICON_LINK_TAG}
 <style>
   * { box-sizing: border-box; }
   :root {
@@ -3269,8 +3285,6 @@ function setupPageHtml(changeProvider) {
 
   .card-head { display: flex; align-items: center; gap: 12px; }
   .avatar { width: 36px; height: 36px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font: 600 15px/1 var(--font); flex-shrink: 0; }
-  .icon-back-btn { width: 36px; height: 36px; flex-shrink: 0; border-radius: 999px; background: #f1f1f1; color: #131212; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-  .icon-back-btn:hover { background: #e3e2e2; }
   .card-name { flex: 1; font: 600 16px/20px var(--font); color: #131212; }
   .connected-tag { display: flex; align-items: center; gap: 5px; font: 600 11px/14px var(--font); color: #265f4f; }
 
@@ -3281,21 +3295,12 @@ function setupPageHtml(changeProvider) {
   .change-btn { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 4px 6px; border-radius: 6px; font: 600 12px/16px var(--font); color: #5b5858; cursor: pointer; }
   .change-btn:hover { background: #ffffff; }
 
-  .choice-list { display: flex; flex-direction: column; gap: 10px; }
-  .choice-card { all: unset; display: flex; align-items: flex-start; gap: 12px; width: 100%; box-sizing: border-box; padding: 14px 16px; border: 1px solid #e3e2e2; border-radius: 8px; background: #ffffff; cursor: pointer; font: inherit; color: inherit; }
-  .choice-card-primary { border-color: #265f4f; background: #f4faf8; }
-  .choice-card:not(.choice-card-primary):hover { background: #f7f7f7; }
-  .choice-card-primary:hover { background: #eef8f4; }
-  .choice-icon { width: 32px; height: 32px; flex-shrink: 0; border-radius: 999px; background: #f1f1f1; color: #5b5858; display: flex; align-items: center; justify-content: center; }
-  .choice-icon-primary { background: #d6f1e5; color: #265f4f; }
-  .choice-body { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .choice-title { font: 600 14px/18px var(--font); color: #131212; }
-  .choice-sub { font: 400 12px/16px var(--font); color: #5b5858; }
-  .chev { color: #8e8b8b; align-self: center; display: flex; }
+  .help-center-link { display: inline-flex; align-items: center; gap: 5px; font: 400 12px/16px var(--font); color: #265f4f; text-decoration: none; margin-bottom: 14px; }
+  .help-center-link:hover { text-decoration: underline; }
 
   .field-steps { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
   .field-step-row { display: flex; align-items: flex-start; gap: 10px; font: 400 13px/19px var(--font); color: #3d3c3c; }
-  .field-step-num { flex-shrink: 0; width: 18px; height: 18px; border-radius: 999px; background: #d6f1e5; color: #265f4f; font: 600 11px/18px var(--font); text-align: center; }
+  .field-step-num { flex-shrink: 0; width: 22px; height: 22px; border-radius: 999px; background: #d6f1e5; color: #265f4f; font: 600 10.5px/22px var(--font); text-align: center; }
   .field-step-row code { font-family: ui-monospace, monospace; background: #f7f7f7; padding: 1px 5px; border-radius: 4px; border: 1px solid #e3e2e2; font-size: 12px; }
   .step-link { display: inline-flex; align-items: center; gap: 4px; color: #265f4f; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
   .step-link:hover { color: #1a4237; }
@@ -3308,14 +3313,16 @@ function setupPageHtml(changeProvider) {
   @keyframes ats-spin { to { transform: translateY(-50%) rotate(360deg); } }
   .reveal-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; border: none; background: none; border-radius: 4px; color: #5b5858; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .reveal-btn:hover { background: #f1f1f1; }
+  .key-format-hint { margin-top: 6px; font: 400 11.5px/16px var(--font); color: #8e8b8b; }
   .field-error, .field-error-slot { margin-top: 8px; min-height: 16px; }
   .field-error { display: flex; align-items: flex-start; gap: 6px; font: 400 12px/16px var(--font); color: #d93d36; }
 
   .field-note { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; font: 400 11.5px/16px var(--font); color: #8e8b8b; }
   .field-note .icon { margin-top: 1px; flex-shrink: 0; }
 
-  .field-label-line { font: 400 13px/18px var(--font); color: #131212; margin: 12px 0 8px; }
-  .delegate-intro { font: 400 13px/18px var(--font); color: #5b5858; margin-bottom: 10px; }
+  .delegate-toggle-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; background: none; border: none; padding: 0; font: 600 12px/16px var(--font); color: #265f4f; cursor: pointer; }
+  .delegate-toggle-btn:hover { text-decoration: underline; }
+  .delegate-intro { font: 400 13px/18px var(--font); color: #5b5858; margin: 14px 0 10px; }
   .message-card { border: 1px solid #e3e2e2; border-radius: 8px; background: #f7f7f7; overflow: hidden; margin-bottom: 14px; }
   .message-card-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #ffffff; border-bottom: 1px solid #e3e2e2; }
   .message-card-head .icon { color: #5b5858; }
@@ -3330,29 +3337,49 @@ function setupPageHtml(changeProvider) {
   .proceed-col button:disabled { background: #e3e2e2; color: #8e8b8b; cursor: not-allowed; }
   .proceed-hint { font: 400 12px/16px var(--font); color: #8e8b8b; }
 
+  .footer-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; background: #ffffff; border-top: 1px solid #e3e2e2; padding: 0 24px; height: 64px; display: flex; align-items: center; }
+  .footer-nav-inner { width: 100%; max-width: 904px; margin: 0 auto; display: flex; align-items: center; }
+  .back-btn { display: inline-flex; align-items: center; gap: 8px; background: #ffffff; border: 1px solid #cccccc; border-radius: 8px; padding: 10px 16px; font: 600 14px/20px var(--font); color: #131212; text-decoration: none; cursor: pointer; }
+  .back-btn:hover { background: #f7f7f7; }
+
   .done-wrap { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
   .done-title { font: 600 20px/26px var(--font); color: #131212; display: flex; align-items: center; gap: 8px; }
   .done-sub { font: 400 13px/18px var(--font); color: #5b5858; }
 
-  .demo-banner { text-align: center; padding: 10px 24px; background: #fef5ef; border-bottom: 1px solid #f8d5b5; color: #5c2b06; font: 600 13px/18px var(--font); }
+  .demo-banner { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px 24px; background: #fef5ef; border-bottom: 1px solid #f8d5b5; color: #5c2b06; font: 600 13px/18px var(--font); }
+  .demo-banner-close { flex: none; border: 0; background: none; padding: 0; color: inherit; font: inherit; font-size: 16px; line-height: 1; cursor: pointer; opacity: 0.7; }
+  .demo-banner-close:hover { opacity: 1; }
 </style>
 </head>
 <body>
   <script type="application/json" id="providers-data">${providersJson}</script>
   <script type="application/json" id="page-data">${pageJson}</script>
-  ${MOCK_MODE ? '<div class="demo-banner">Demo mode — no real API keys needed. Enter anything below (e.g. &ldquo;demo&rdquo;) to continue; all data shown is mocked.</div>' : ""}
+  ${MOCK_MODE ? '<div class="demo-banner"><span>No API key yet? Enter &ldquo;demo&rdquo; to explore with example data. It is always possible to add API keys at a later stage.</span><button type="button" class="demo-banner-close" aria-label="Dismiss" onclick="this.closest(\'.demo-banner\').remove()">&times;</button></div>' : ""}
   <div class="nav-bar">
     <span class="nav-bar-logo">${MOSS_WORDMARK_SVG}</span>
     ${
       mode === "setup"
-        ? '<a href="/" class="back-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;display:block"><path d="M15 6l-6 6 6 6"/></svg>Back to guide</a>'
-        // "add-*"/"change-*" modes are only ever reached from an already-running dashboard
-        // (the connect-provider nudge, or the header's "Change key" action) — without this,
-        // changing your mind here means falling back to the browser's own back button.
-        : '<a href="/" class="back-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;display:block"><path d="M15 6l-6 6 6 6"/></svg>Back to dashboard</a>'
+        ? '<div style="flex:1;display:flex;align-items:center;justify-content:center;gap:12px">' +
+            '<span style="font:400 12px/16px var(--font);color:#5b5858">Step 3 of 3</span>' +
+            '<div style="display:flex;gap:6px;align-items:center">' +
+              '<span style="width:8px;height:8px;border-radius:999px;background:#aee1cc;display:block"></span>' +
+              '<span style="width:8px;height:8px;border-radius:999px;background:#aee1cc;display:block"></span>' +
+              '<span style="width:8px;height:8px;border-radius:999px;background:#265f4f;display:block"></span>' +
+            "</div>" +
+            '<span style="font:500 12px/16px var(--font);color:#131212">Get your providers connected</span>' +
+          "</div>"
+        : ""
+    }
+    ${
+      mode === "setup"
+        ? ""
+        : // "add-*"/"change-*" modes are only ever reached from an already-running dashboard
+          // (the connect-provider nudge, or the header's "Change key" action) — without this,
+          // changing your mind here means falling back to the browser's own back button.
+          '<a href="/" class="back-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;display:block"><path d="M15 6l-6 6 6 6"/></svg>Back to dashboard</a>'
     }
   </div>
-  <div class="page-wrap">
+  <div class="page-wrap" style="${mode === "setup" ? "padding-bottom:96px;" : ""}">
     <div>
       <div class="page-title" id="page-title"></div>
       <div class="page-subtitle" id="page-subtitle"></div>
@@ -3362,9 +3389,14 @@ function setupPageHtml(changeProvider) {
     </div>
     <div class="proceed-col">
       <button type="button" id="proceed-btn" disabled>${pageCopy.buttonLabel}</button>
-      <div class="proceed-hint" id="proceed-hint">${pageCopy.cards.length > 1 ? "Connect at least one provider to continue." : "Paste your key to continue."}</div>
+      <div class="proceed-hint" id="proceed-hint">${pageCopy.cards.length > 1 ? "" : "Paste your key to continue."}</div>
     </div>
   </div>
+  ${
+    mode === "setup"
+      ? '<div class="footer-nav"><div class="footer-nav-inner"><a href="/?step=2" class="back-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;display:block"><path d="M15 6l-6 6 6 6"/></svg>Back</a></div></div>'
+      : ""
+  }
   <script>${SETUP_CLIENT_SCRIPT}</script>
 </body>
 </html>`;
@@ -3580,8 +3612,13 @@ const server = createServer(async (req, res) => {
       // is everything BEFORE connecting providers; every exit point from it (skip the guide,
       // skip a step, finish step 2) navigates to /connect (handled above) rather than
       // rendering a 4th local screen, since that key-entry page already does that job.
+      // ?step= lets /connect's "Back" link return here at step 2 instead of resetting to the
+      // intro — a full page navigation loses this SPA's in-memory state.screen otherwise.
+      const stepParam = url.searchParams.get("step");
+      const requestedStep = stepParam === null ? NaN : Number(stepParam);
+      const initialScreen = Number.isInteger(requestedStep) && requestedStep >= 0 && requestedStep <= 2 ? requestedStep : null;
       res.writeHead(200, { "Content-Type": "text/html" });
-      return res.end(onboardingGuideHtml());
+      return res.end(onboardingGuideHtml(initialScreen));
     }
     if (url.pathname === "/api/cost-summary")
       return await handleCostSummary(res, url.searchParams);

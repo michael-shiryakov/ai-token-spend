@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI Spend Control</title>
+    <title>Moss: AI Token Cost Tracker</title>
     <style>
       /* Systemia is Moss's brand font (self-hosted, from lib-ui-components' dist/fonts).
          Embedded as base64 data URIs so index.html stays a single self-contained file —
@@ -116,10 +116,15 @@
         width: auto;
         display: block;
       }
+      .app-bar-title-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        justify-self: center;
+      }
       .app-bar-title {
         font-weight: 740;
         letter-spacing: -0.01em;
-        justify-self: center;
       }
       .connection-status {
         display: flex;
@@ -1090,9 +1095,11 @@
       <div class="brand">
         <span class="brand-mark"><!--ICON:moss-wordmark--></span>
       </div>
-      <div class="app-bar-title">AI Spend Control</div>
-      <div class="app-bar-right">
+      <div class="app-bar-title-group">
         <div class="demo-badge" id="demoBadge" hidden>Demo &middot; sample data</div>
+        <div class="app-bar-title">AI Token Cost Tracker</div>
+      </div>
+      <div class="app-bar-right">
         <div class="connection-status">
           <i></i><span id="connectionStatus">Connecting&hellip;</span>
         </div>
@@ -1202,7 +1209,7 @@
       <div class="page-intro">
         <div>
           <div class="eyebrow">AI spend for finance</div>
-          <h1>Bring AI token spend under control</h1>
+          <h1>Bring AI token spend under track</h1>
           <p style="margin-bottom: 8px">
             AI costs grow across providers because every employee and
             automated workflow can start the meter, creating a variable cost
@@ -3250,7 +3257,7 @@
         }
         if (anthropicActive)
           series.push({
-            name: "Anthropic",
+            name: "Claude",
             color: cssVar("--anthropic"),
             values: anthropic[key],
           });

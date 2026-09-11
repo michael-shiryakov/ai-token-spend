@@ -1,6 +1,8 @@
-# AI Spend Control
+# Moss AI Token Cost Tracker
 
 A  dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no data leaves your machine.
+
+TODO: add a video/gif guide of how to install this project
 
 ## Requirements
 
