@@ -1,25 +1,25 @@
 # Moss AI Token Cost Tracker
 
-A  dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no data leaves your machine.
+A dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no data leaves your machine.
 
-TODO: add a video/gif guide of how to install this project
+https://github.com/user-attachments/assets/8a270db4-dd00-4bb9-8a2e-e2e1a35f86c7
 
 ## Requirements
 
 - [Node.js](https://nodejs.org/) 22 or newer
 
 1. Install nvm (if you don't have it):
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-Then restart your terminal (or run source ~/.zshrc).
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+   Then restart your terminal (or run source ~/.zshrc).
 
 2. Install the specific Node version:
-nvm install 24.14.1
+   nvm install 24.14.1
 
 3. Use it:
-nvm use 24.14.1
+   nvm use 24.14.1
 
 4. Set a default version so nvm loads it automatically every time
-nvm alias default 24.14.1
+   nvm alias default 24.14.1
 
 ## Setup
 
@@ -50,11 +50,11 @@ Then open [http://localhost:4173](http://localhost:4173), and enter anything (e.
 
 ## Useful commands
 
-| Command | What it does |
-|---|---|
-| `npm start` | Runs the local server on port `4173` |
-| `npm run demo` | Runs the dashboard in demo mode with mock data, no API keys required |
-| `npm test` | Runs the test suite |
+| Command                    | What it does                                                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| `npm start`                | Runs the local server on port `4173`                                                        |
+| `npm run demo`             | Runs the dashboard in demo mode with mock data, no API keys required                        |
+| `npm test`                 | Runs the test suite                                                                         |
 | `npm run reset-onboarding` | Clears your `.env` (backed up to `.env.bak`) and restarts you into the first-run setup flow |
 
 ## How it works
