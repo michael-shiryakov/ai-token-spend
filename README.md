@@ -16,58 +16,71 @@ A dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no da
 
 </details>
 
-## Requirements
+## Setup
 
-- [Node.js](https://nodejs.org/) 22 or newer
-
-### macOS / Linux
+<details>
+<summary>macOS installation guide</summary>
 
 1. Install Git:
    xcode-select --install
    Then restart your terminal.
 
-2. Install nvm:
-   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-   Then restart your terminal (or run source ~/.zshrc).
-
-3. Install the specific Node version:
-   nvm install 24.14.1
-
-4. Use it:
-   nvm use 24.14.1
-
-5. Set a default version so nvm loads it automatically every time
-   nvm alias default 24.14.1
-
-### Windows
-
-1. Install Git:
-   winget install --id Git.Git -e
-   Then restart your terminal.
-
-2. Install nvm-windows:
-   winget install CoreyButler.NVMforWindows
-   Then restart your terminal.
-
-3. Install the specific Node version:
-   nvm install 24.14.1
-
-4. Use it:
-   nvm use 24.14.1
-
-5. If PowerShell blocks npm with a "running scripts is disabled" error, allow locally-created scripts to run:
-   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-
-## Setup
-
-1. Clone this repo and install nothing - there are no dependencies to install.
+2. Clone this repo:
 
    ```bash
    git clone https://github.com/michael-shiryakov/ai-token-spend.git
    cd ai-token-spend
    ```
 
-2. Start the app:
+3. Install nvm:
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+   Then restart your terminal (or run source ~/.zshrc).
+
+4. Install the specific Node version:
+   nvm install 24.14.1
+
+5. Use it:
+   nvm use 24.14.1
+
+6. Set a default version so nvm loads it automatically every time
+   nvm alias default 24.14.1
+
+</details>
+
+<details>
+<summary>Windows installation guide</summary>
+
+1. Install Git:
+   winget install --id Git.Git -e
+   Then restart your terminal.
+
+2. Clone this repo:
+
+   ```bash
+   git clone https://github.com/michael-shiryakov/ai-token-spend.git
+   cd ai-token-spend
+   ```
+
+3. Install nvm-windows:
+   winget install CoreyButler.NVMforWindows
+   Then restart your terminal.
+
+4. Install the specific Node version:
+   nvm install 24.14.1
+
+5. Use it:
+   nvm use 24.14.1
+
+6. If PowerShell blocks npm with a "running scripts is disabled" error, allow locally-created scripts to run:
+   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+
+</details>
+
+## Running the tool
+
+There are no dependencies to install.
+
+1. Start the app:
 
    ```bash
    npm start
@@ -97,6 +110,10 @@ Then open [http://localhost:4173](http://localhost:4173), and enter anything (e.
 ## How it works
 
 Everything lives in two files: `server.mjs` (a dependency-free Node HTTP server) and `index.html` (a single self-contained page — styles, fonts, and scripts all inlined, no build step). Your API keys stay in your local `.env` file and are only used to call the Anthropic/OpenAI APIs directly from your machine.
+
+## Requirements
+
+- [Node.js](https://nodejs.org/) 22 or newer
 
 ## License
 
