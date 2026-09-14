@@ -2,7 +2,19 @@
 
 A dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no data leaves your machine.
 
-https://github.com/user-attachments/assets/8a270db4-dd00-4bb9-8a2e-e2e1a35f86c7
+<details open>
+<summary>macOS setup guide (GIF)</summary>
+
+![macOS setup guide](assets/gif/Repository_tutorial_macOS.gif)
+
+</details>
+
+<details>
+<summary>Windows setup guide (GIF)</summary>
+
+TODO: add Windows setup GIF
+
+</details>
 
 ## Requirements
 
