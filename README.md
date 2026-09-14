@@ -12,7 +12,7 @@ A dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no da
 <details>
 <summary>Windows setup guide (GIF)</summary>
 
-TODO: add Windows setup GIF
+![Windows setup guide](assets/gif/Repositor_tutorial_Win.gif)
 
 </details>
 
@@ -22,22 +22,26 @@ TODO: add Windows setup GIF
 
 ### macOS / Linux
 
-1. Install nvm (if you don't have it):
+1. Install Git:
+   xcode-select --install
+   Then restart your terminal.
+
+2. Install nvm:
    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
    Then restart your terminal (or run source ~/.zshrc).
 
-2. Install the specific Node version:
+3. Install the specific Node version:
    nvm install 24.14.1
 
-3. Use it:
+4. Use it:
    nvm use 24.14.1
 
-4. Set a default version so nvm loads it automatically every time
+5. Set a default version so nvm loads it automatically every time
    nvm alias default 24.14.1
 
 ### Windows
 
-1. Install Git (if you don't have it):
+1. Install Git:
    winget install --id Git.Git -e
    Then restart your terminal.
 
@@ -50,6 +54,9 @@ TODO: add Windows setup GIF
 
 4. Use it:
    nvm use 24.14.1
+
+5. If PowerShell blocks npm with a "running scripts is disabled" error, allow locally-created scripts to run:
+   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 ## Setup
 
