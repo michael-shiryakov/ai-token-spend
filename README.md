@@ -20,6 +20,8 @@ TODO: add Windows setup GIF
 
 - [Node.js](https://nodejs.org/) 22 or newer
 
+### macOS / Linux
+
 1. Install nvm (if you don't have it):
    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
    Then restart your terminal (or run source ~/.zshrc).
@@ -32,6 +34,22 @@ TODO: add Windows setup GIF
 
 4. Set a default version so nvm loads it automatically every time
    nvm alias default 24.14.1
+
+### Windows
+
+1. Install Git (if you don't have it):
+   winget install --id Git.Git -e
+   Then restart your terminal.
+
+2. Install nvm-windows:
+   winget install CoreyButler.NVMforWindows
+   Then restart your terminal.
+
+3. Install the specific Node version:
+   nvm install 24.14.1
+
+4. Use it:
+   nvm use 24.14.1
 
 ## Setup
 
