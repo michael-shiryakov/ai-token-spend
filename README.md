@@ -22,7 +22,11 @@ A dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no da
 <summary>macOS installation guide</summary>
 
 1. Install Git:
+
+   ```bash
    xcode-select --install
+   ```
+
    Then restart your terminal.
 
 2. Clone this repo:
@@ -33,17 +37,30 @@ A dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no da
    ```
 
 3. Install nvm:
+
+   ```bash
    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+   ```
+
    Then restart your terminal (or run source ~/.zshrc).
 
 4. Install the specific Node version:
+
+   ```bash
    nvm install 24.14.1
+   ```
 
 5. Use it:
-   nvm use 24.14.1
 
-6. Set a default version so nvm loads it automatically every time
+   ```bash
+   nvm use 24.14.1
+   ```
+
+6. Set a default version so nvm loads it automatically every time:
+
+   ```bash
    nvm alias default 24.14.1
+   ```
 
 </details>
 
@@ -51,7 +68,11 @@ A dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no da
 <summary>Windows installation guide</summary>
 
 1. Install Git:
+
+   ```bash
    winget install --id Git.Git -e
+   ```
+
    Then restart your terminal.
 
 2. Clone this repo:
@@ -62,17 +83,30 @@ A dashboard for tracking your team's AI token spend (Anthropic + OpenAI) - no da
    ```
 
 3. Install nvm-windows:
+
+   ```bash
    winget install CoreyButler.NVMforWindows
+   ```
+
    Then restart your terminal.
 
 4. Install the specific Node version:
+
+   ```bash
    nvm install 24.14.1
+   ```
 
 5. Use it:
+
+   ```bash
    nvm use 24.14.1
+   ```
 
 6. If PowerShell blocks npm with a "running scripts is disabled" error, allow locally-created scripts to run:
+
+   ```bash
    Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+   ```
 
 </details>
 
