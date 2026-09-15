@@ -618,16 +618,72 @@
         </div>
       </section> -->
 
-      <section class="card future-card" aria-label="Saving opportunities coming soon">
+      <section class="card" id="savingsCard">
         <div class="section-heading">
           <div class="section-copy">
             <div class="step-label"><b>3</b> Saving opportunities</div>
             <h2>Where can we spend less without cutting useful AI work?</h2>
             <p>
-              Find the workloads, models and usage habits where a change
-              could lower cost without getting in the way of productive use.
+              Start with the amount of company spend sitting above its
+              expected range, calculated from the previous 4 completed
+              periods. Then check whether Anthropic's own token rate is
+              drifting from list price.
             </p>
-            <p>Coming soon</p>
+          </div>
+        </div>
+
+        <div class="section-body">
+          <div class="loading-block" id="savingsMetricBlock">
+            <article class="kpi savings-metric">
+              <div class="kpi-label">Spend above expected range</div>
+              <span class="kpi-value" id="savingsMetricValue"></span>
+              <span class="kpi-sub" id="savingsMetricSub"></span>
+            </article>
+            <div class="chart-card savings-trend-card">
+              <svg
+                id="savingsTrendChart"
+                viewBox="0 0 560 140"
+                role="img"
+                aria-label="Company spend across the previous 4 periods and the current period"
+              ></svg>
+            </div>
+          </div>
+
+          <div class="loading-block savings-rate-subsection" id="savingsRateBlock">
+            <div class="savings-rate-head">
+              <div>
+                <h3>Are our own token rates becoming more expensive?</h3>
+                <p>
+                  Anthropic's blended $/1M tokens actually paid this period
+                  vs the previous period, and vs the official list-price
+                  rate for the same model mix.
+                </p>
+              </div>
+              <button
+                class="table-toggle"
+                id="openModelGuideBtn"
+                type="button"
+              >
+                Which model fits the job?
+              </button>
+            </div>
+            <div class="kpis savings-rate-grid" id="savingsRateGrid"></div>
+            <details class="savings-rate-details">
+              <summary>View input, output and cached rates</summary>
+              <div class="table-view-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Token type</th>
+                      <th class="num">Actual this period</th>
+                      <th class="num">Change vs previous period</th>
+                      <th class="num">Expected list rate</th>
+                    </tr>
+                  </thead>
+                  <tbody id="savingsRateTableBody"></tbody>
+                </table>
+              </div>
+            </details>
           </div>
         </div>
       </section>
@@ -646,6 +702,97 @@
         </div>
       </section>
     </main>
+
+    <div class="modal-backdrop" id="modelGuideModal" hidden>
+      <section
+        class="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modelGuideTitle"
+      >
+        <div class="modal-head">
+          <div>
+            <h3 id="modelGuideTitle">Choose enough capability for the job</h3>
+            <p>
+              Provider positioning and current standard text-token prices.
+              Validate task quality before changing a production route.
+            </p>
+          </div>
+          <button
+            class="icon-button modal-close"
+            id="modelGuideCloseBtn"
+            type="button"
+            aria-label="Close model guide"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-scroll">
+          <div
+            class="segmented model-tabs"
+            id="modelGuideTabs"
+            role="tablist"
+            aria-label="Model provider"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected="true"
+              data-model-tab="anthropic"
+            >
+              Anthropic
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected="false"
+              data-model-tab="openai"
+            >
+              ChatGPT / OpenAI
+            </button>
+          </div>
+          <div class="model-panel" data-model-panel="anthropic">
+            <div class="capability-ladder" id="modelGuideAnthropicList"></div>
+            <p class="guide-source">
+              Current generally available models and prices from the
+              official
+              <a
+                href="https://platform.claude.com/docs/en/models/overview"
+                target="_blank"
+                rel="noreferrer"
+                >Anthropic model overview</a
+              >
+              and
+              <a
+                href="https://platform.claude.com/docs/en/about-claude/pricing"
+                target="_blank"
+                rel="noreferrer"
+                >pricing page</a
+              >.
+            </p>
+          </div>
+          <div class="model-panel" data-model-panel="openai" hidden>
+            <div class="capability-ladder" id="modelGuideOpenAiList"></div>
+            <p class="guide-source">
+              Current general-purpose models and prices from the official
+              <a
+                href="https://developers.openai.com/api/docs/models"
+                target="_blank"
+                rel="noreferrer"
+                >OpenAI model catalogue</a
+              >
+              and
+              <a
+                href="https://developers.openai.com/api/docs/pricing"
+                target="_blank"
+                rel="noreferrer"
+                >pricing page</a
+              >.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
 
     <script type="module">
       import {
@@ -699,6 +846,7 @@
         teams: null,
         teamSeries: null,
         openaiProjects: null,
+        savings: null,
         visibility: {
           byProduct: new Set(),
           byModel: new Set(),
@@ -1531,6 +1679,7 @@
         "modelCachingCard",
         "teamsCard",
         "openaiProjectsCard",
+        "savingsCard",
       ];
 
       // Tracks fetches that are still in flight, keyed by `endpoint:range`, so that switching
@@ -1727,6 +1876,16 @@
               renderOpenAiProjects();
             },
           ),
+          loadPiece(
+            "savings-summary",
+            key,
+            `/api/savings-summary?${q}`,
+            ["savingsCard"],
+            (data) => {
+              state.savings = data;
+              renderSavingsSection();
+            },
+          ),
         ];
       }
 
@@ -1745,6 +1904,7 @@
           state.teams =
           state.teamSeries =
           state.openaiProjects =
+          state.savings =
             null;
         state.visibility.byProduct = null;
         state.visibility.byModel = null;
@@ -2773,6 +2933,223 @@
         });
       }
 
+      function renderSavingsSection() {
+        renderSavingsMetric();
+        drawSavingsTrendChart();
+        renderSavingsRates();
+      }
+
+      function renderSavingsMetric() {
+        const valueEl = document.getElementById("savingsMetricValue");
+        const subEl = document.getElementById("savingsMetricSub");
+        if (!valueEl || !subEl) return;
+        const s = state.savings;
+        if (!s) {
+          valueEl.textContent = "";
+          subEl.textContent = "";
+          return;
+        }
+        if (!s.spendAboveRange) {
+          const periodsUsed = s.baseline.periods.filter(
+            (p) => p.spend != null,
+          ).length;
+          valueEl.textContent = "Not enough history yet";
+          subEl.textContent = `Need at least 2 completed periods the same length as the current one to build a baseline — only ${periodsUsed} available so far.`;
+          return;
+        }
+        const [low, high] = s.baseline.expectedRange;
+        valueEl.textContent = money(s.spendAboveRange.amount);
+        subEl.textContent = s.spendAboveRange.isAbove
+          ? `${s.spendAboveRange.percentage.toFixed(1)}% of this period's spend · normal range ${money(low)}–${money(high)} (previous ${s.baseline.periodsUsed} periods)`
+          : `Within the normal range of ${money(low)}–${money(high)} (previous ${s.baseline.periodsUsed} periods)`;
+      }
+
+      function drawSavingsTrendChart() {
+        const svg = document.getElementById("savingsTrendChart");
+        if (!svg) return;
+        svg.innerHTML = "";
+        const s = state.savings;
+        if (!s) return;
+
+        // Oldest baseline period first, then the current period — left to right in
+        // reading order, matching every other trend chart in this dashboard.
+        const orderedPeriods = [...s.baseline.periods].reverse();
+        const values = [...orderedPeriods.map((p) => p.spend), s.currentSpend];
+        const labels = [
+          ...orderedPeriods.map((_, i) => `T−${orderedPeriods.length - i}`),
+          "Current",
+        ];
+
+        const width = 560,
+          height = 140;
+        const margin = { top: 16, right: 16, bottom: 24, left: 16 };
+        const plotW = width - margin.left - margin.right;
+        const plotH = height - margin.top - margin.bottom;
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+        const finiteValues = values.filter(
+          (v) => v != null && Number.isFinite(v),
+        );
+        if (!finiteValues.length) return;
+        const max = niceMax(Math.max(...finiteValues, 1));
+        const x = xScale(values.length, plotW, margin.left);
+        const y = yScale(max, plotH, margin.top);
+
+        const linePoints = values
+          .map((v, i) => (v == null ? null : `${x(i)},${y(v)}`))
+          .filter(Boolean)
+          .join(" ");
+        svg.appendChild(
+          createSvgElement("polyline", {
+            points: linePoints,
+            fill: "none",
+            stroke: "var(--brand)",
+            "stroke-width": 2.5,
+          }),
+        );
+
+        const aboveRange = s.spendAboveRange?.isAbove;
+        values.forEach((v, i) => {
+          if (v == null) return;
+          const isCurrent = i === values.length - 1;
+          svg.appendChild(
+            createSvgElement("circle", {
+              cx: x(i),
+              cy: y(v),
+              r: isCurrent ? 5 : 3,
+              fill:
+                isCurrent && aboveRange
+                  ? "var(--serious)"
+                  : isCurrent
+                    ? "var(--brand)"
+                    : "var(--surface-1)",
+              stroke: "var(--brand)",
+              "stroke-width": 2,
+            }),
+          );
+          const label = createSvgElement("text", {
+            class: "axis-label",
+            x: x(i),
+            y: height - 6,
+            "text-anchor":
+              i === 0 ? "start" : i === values.length - 1 ? "end" : "middle",
+          });
+          label.textContent = labels[i];
+          svg.appendChild(label);
+        });
+      }
+
+      function savingsRateTile(label, dotColor, valueText, deltaHtml, subText) {
+        const tile = document.createElement("article");
+        tile.className = "kpi";
+
+        const labelEl = document.createElement("div");
+        labelEl.className = "kpi-label";
+        if (dotColor) {
+          const dot = document.createElement("span");
+          dot.className = "row-dot";
+          dot.style.background = dotColor;
+          labelEl.appendChild(dot);
+        }
+        labelEl.append(label);
+
+        const valueEl = document.createElement("span");
+        valueEl.className = "kpi-value";
+        valueEl.textContent = valueText;
+
+        const deltaEl = document.createElement("span");
+        deltaEl.className = "kpi-delta";
+        deltaEl.innerHTML = deltaHtml;
+
+        const subEl = document.createElement("span");
+        subEl.className = "kpi-sub";
+        subEl.textContent = subText;
+
+        tile.append(labelEl, valueEl, deltaEl, subEl);
+        return tile;
+      }
+
+      function renderSavingsRates() {
+        const grid = document.getElementById("savingsRateGrid");
+        const tbody = document.getElementById("savingsRateTableBody");
+        if (!grid || !tbody) return;
+        grid.innerHTML = "";
+        tbody.innerHTML = "";
+        const s = state.savings;
+        if (!s) return;
+
+        const { actual, previous, expectedList } = s.anthropicRate;
+        const changeVsPrevious = previous
+          ? pctChange(actual.ratePerMillion, previous.ratePerMillion)
+          : null;
+        const expectedNote =
+          expectedList.ratePerMillion == null
+            ? "No published list price for this model mix"
+            : `Expected list rate ${money(expectedList.ratePerMillion)}` +
+              (expectedList.modelsSkipped
+                ? ` · excludes ${expectedList.modelsSkipped} model${expectedList.modelsSkipped > 1 ? "s" : ""} without a published price`
+                : "");
+
+        grid.appendChild(
+          savingsRateTile(
+            "Anthropic",
+            "var(--anthropic)",
+            actual.ratePerMillion != null
+              ? `${money(actual.ratePerMillion)} / 1M tokens`
+              : "—",
+            changeVsPrevious != null
+              ? `${trendBadge(changeVsPrevious, { goodDirection: "down" })} vs previous period`
+              : "No previous-period comparison yet",
+            expectedNote,
+          ),
+        );
+        grid.appendChild(
+          savingsRateTile(
+            "ChatGPT / OpenAI",
+            "var(--openai)",
+            "Coming soon",
+            "",
+            "Per-token usage data for OpenAI isn't wired up yet.",
+          ),
+        );
+
+        const prevByType = previous
+          ? Object.fromEntries(previous.byTokenType.map((t) => [t.type, t]))
+          : {};
+        const rowLabels = { input: "Input", cached: "Cached input", output: "Output" };
+        const expectedByType = Object.fromEntries(
+          expectedList.byTokenType.map((t) => [t.type, t]),
+        );
+        actual.byTokenType.forEach((row) => {
+          const tr = document.createElement("tr");
+          const labelCell = document.createElement("td");
+          labelCell.textContent = rowLabels[row.type] ?? row.type;
+
+          const actualCell = document.createElement("td");
+          actualCell.className = "num";
+          actualCell.textContent =
+            row.ratePerMillion != null ? money(row.ratePerMillion) : "—";
+
+          const prevRate = prevByType[row.type]?.ratePerMillion ?? null;
+          const change = pctChange(row.ratePerMillion, prevRate);
+          const changeCell = document.createElement("td");
+          changeCell.className = "num";
+          changeCell.innerHTML =
+            change != null
+              ? trendBadge(change, { goodDirection: "down" }) || "—"
+              : "—";
+
+          const expectedRate = expectedByType[row.type]?.ratePerMillion ?? null;
+          const expectedCell = document.createElement("td");
+          expectedCell.className = "num";
+          expectedCell.textContent =
+            expectedRate != null ? money(expectedRate) : "—";
+
+          tr.append(labelCell, actualCell, changeCell, expectedCell);
+          tbody.appendChild(tr);
+        });
+      }
+
       function renderToolAcceptance() {
         const data = state.toolAcceptance;
         const body = document.getElementById("toolAcceptanceBody");
@@ -3137,6 +3514,148 @@
       document.getElementById("peopleFilter")?.addEventListener("input", (e) => {
         state.peopleFilter = e.target.value;
         renderPeople();
+      });
+
+      // Display names + tier copy only — prices are pulled live from MODEL_PRICING
+      // (lib/format.mjs) below so this can't drift out of sync with the numbers the
+      // rate-benchmark table already uses.
+      const ANTHROPIC_MODEL_GUIDE = [
+        {
+          tier: "Frontier specialist",
+          name: "Claude Fable 5",
+          id: "claude-fable-5",
+          jobFit:
+            "Demanding reasoning and long-horizon agents when Opus 5 at higher effort still falls short.",
+        },
+        {
+          tier: "Highest general use",
+          name: "Claude Opus 5",
+          id: "claude-opus-5",
+          jobFit:
+            "Complex agentic coding and difficult enterprise work. Anthropic's recommended starting point for most workloads.",
+        },
+        {
+          tier: "Balanced",
+          name: "Claude Sonnet 5",
+          id: "claude-sonnet-5",
+          jobFit:
+            "Everyday coding, analysis, content and tool use with a strong speed-to-intelligence balance.",
+        },
+        {
+          tier: "Fastest",
+          name: "Claude Haiku 4.5",
+          id: "claude-haiku-4-5",
+          jobFit:
+            "Real-time, high-volume and cost-sensitive work, including smaller sub-agent tasks.",
+        },
+      ];
+
+      // Reference copy only — no OpenAI per-model pricing/usage data is wired into
+      // this dashboard (see the "Coming soon" tile above), so these prices are
+      // static text, not computed from any fetched data.
+      const OPENAI_MODEL_GUIDE = [
+        {
+          tier: "Highest capability",
+          name: "GPT-6 Astra",
+          price: "$10 input · $1 cached · $50 output",
+          jobFit:
+            "Hardest end-to-end work: complex reasoning, coding, computer use, research and finished documents.",
+        },
+        {
+          tier: "Advanced",
+          name: "GPT-5.6 Sol",
+          price: "$4 input · $0.40 cached · $20 output",
+          jobFit:
+            "Complex professional work where a flagship model is needed, but Astra-level capability is unnecessary.",
+        },
+        {
+          tier: "Balanced",
+          name: "GPT-5.6 Terra",
+          price: "$2 input · $0.20 cached · $12 output",
+          jobFit:
+            "Everyday knowledge work and moderate-complexity automations balancing intelligence and cost.",
+        },
+        {
+          tier: "High-volume",
+          name: "GPT-5.6 Luna",
+          price: "$0.20 input · $0.02 cached · $1.20 output",
+          jobFit:
+            "Cost-sensitive repetitive work such as extraction, classification and straightforward summaries.",
+        },
+      ];
+
+      function renderModelGuideList(containerId, rows) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = "";
+        rows.forEach((row) => {
+          const wrap = document.createElement("div");
+          wrap.className = "model-guide-row";
+          const tier = document.createElement("span");
+          tier.className = "tier";
+          tier.textContent = row.tier;
+          const name = document.createElement("span");
+          name.className = "model-name";
+          name.textContent = row.name;
+          const jobFit = document.createElement("span");
+          jobFit.className = "job-fit";
+          jobFit.textContent = row.jobFit;
+          const price = document.createElement("span");
+          price.className = "model-price";
+          price.textContent = row.price;
+          wrap.append(tier, name, jobFit, price);
+          container.appendChild(wrap);
+        });
+      }
+
+      function renderModelGuide() {
+        renderModelGuideList(
+          "modelGuideAnthropicList",
+          ANTHROPIC_MODEL_GUIDE.map((row) => {
+            const pricing = modelPricingFor(row.id);
+            return {
+              ...row,
+              price: pricing
+                ? `$${pricing.input} input · $${pricing.cached} cached · $${pricing.output} output`
+                : "Price unavailable",
+            };
+          }),
+        );
+        renderModelGuideList("modelGuideOpenAiList", OPENAI_MODEL_GUIDE);
+      }
+      renderModelGuide();
+
+      function openModelGuide() {
+        const modal = document.getElementById("modelGuideModal");
+        if (!modal) return;
+        modal.hidden = false;
+        document.getElementById("modelGuideCloseBtn")?.focus();
+      }
+      function closeModelGuide() {
+        const modal = document.getElementById("modelGuideModal");
+        if (modal) modal.hidden = true;
+        document.getElementById("openModelGuideBtn")?.focus();
+      }
+      onClick("openModelGuideBtn", openModelGuide);
+      onClick("modelGuideCloseBtn", closeModelGuide);
+      document.getElementById("modelGuideModal")?.addEventListener("click", (e) => {
+        if (e.target.id === "modelGuideModal") closeModelGuide();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const modal = document.getElementById("modelGuideModal");
+        if (modal && !modal.hidden) closeModelGuide();
+      });
+      document.getElementById("modelGuideTabs")?.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-model-tab]");
+        if (!btn) return;
+        const target = btn.dataset.modelTab;
+        document.querySelectorAll("#modelGuideTabs [data-model-tab]").forEach((tab) => {
+          tab.setAttribute("aria-selected", String(tab === btn));
+        });
+        document.querySelectorAll("[data-model-panel]").forEach((panel) => {
+          panel.hidden = panel.dataset.modelPanel !== target;
+        });
       });
 
       loadData()

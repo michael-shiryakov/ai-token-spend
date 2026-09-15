@@ -991,6 +991,170 @@
         margin-bottom: 8px;
       }
 
+      .savings-metric {
+        min-height: auto;
+      }
+      .savings-trend-card {
+        margin-top: 12px;
+        padding: 8px 16px 4px;
+      }
+      .savings-rate-subsection {
+        margin-top: 24px;
+        padding-top: 24px;
+        border-top: 1px solid var(--border);
+      }
+      .savings-rate-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .savings-rate-head h3 {
+        margin: 0 0 4px;
+        font-size: 15px;
+      }
+      .savings-rate-head p {
+        margin: 0;
+        color: var(--text-secondary);
+        font-size: 13px;
+        max-width: 640px;
+      }
+      .savings-rate-head .table-toggle {
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+      .savings-rate-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-bottom: 0;
+      }
+      .savings-rate-details {
+        margin-top: 16px;
+      }
+      .savings-rate-details summary {
+        cursor: pointer;
+        color: var(--brand);
+        font-size: 12px;
+        font-weight: 750;
+      }
+      .savings-rate-details .table-view-wrap {
+        margin-top: 12px;
+      }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(19, 18, 18, 0.45);
+        z-index: 20;
+      }
+      .modal-backdrop[hidden] {
+        display: none;
+      }
+      .modal-dialog {
+        width: 100%;
+        max-width: 720px;
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        border-radius: 10px;
+        background: var(--surface-1);
+        box-shadow: 0 20px 60px rgba(19, 18, 18, 0.3);
+        overflow: hidden;
+      }
+      .modal-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border);
+      }
+      .modal-head h3 {
+        margin: 0 0 6px;
+        font-size: 17px;
+      }
+      .modal-head p {
+        margin: 0;
+        color: var(--text-secondary);
+        font-size: 13px;
+        max-width: 560px;
+      }
+      .icon-button {
+        flex: 0 0 auto;
+        border: none;
+        background: none;
+        color: var(--text-secondary);
+        font-size: 20px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 4px 6px;
+      }
+      .icon-button:hover {
+        color: var(--text-primary);
+      }
+      .modal-scroll {
+        padding: 20px 24px 24px;
+        overflow-y: auto;
+      }
+      .model-tabs {
+        margin-bottom: 16px;
+      }
+      .capability-ladder {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .model-guide-row {
+        display: grid;
+        grid-template-columns: 140px 140px 1fr 200px;
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-soft);
+        font-size: 12px;
+      }
+      .model-guide-row .tier {
+        color: var(--brand);
+        font-weight: 750;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 0.03em;
+      }
+      .model-guide-row .model-name {
+        font-weight: 700;
+      }
+      .model-guide-row .job-fit {
+        color: var(--text-secondary);
+      }
+      .model-guide-row .model-price {
+        font-weight: 650;
+        text-align: right;
+      }
+      @media (max-width: 720px) {
+        .model-guide-row {
+          grid-template-columns: 1fr;
+          text-align: left;
+        }
+        .model-guide-row .model-price {
+          text-align: left;
+        }
+      }
+      .guide-source {
+        margin: 16px 0 0;
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+      .guide-source a {
+        color: var(--brand);
+      }
+
       table {
         width: 100%;
         border-collapse: collapse;

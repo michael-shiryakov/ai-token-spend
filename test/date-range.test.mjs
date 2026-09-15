@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chunkDateRange, resolveRange, rangeDays } from "../server.mjs";
+import {
+  chunkDateRange,
+  resolveRange,
+  rangeDays,
+  priorPeriodBounds,
+} from "../server.mjs";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -110,4 +115,35 @@ test("resolveRange: from after to falls back to the preset default instead of a 
   const range = resolveRange(new URLSearchParams("from=2026-01-10&to=2026-01-01"));
   assert.equal(range.days, 7);
   assert.ok(new Date(range.endingAt).getTime() > new Date(range.startingAt).getTime());
+});
+
+test("priorPeriodBounds: period 1 matches resolveRange's own prev period exactly, with no gap", () => {
+  const range = resolveRange(new URLSearchParams("days=28"));
+  const startingAtMs = new Date(range.startingAt).getTime();
+  const [period1] = priorPeriodBounds(startingAtMs, 28, 4);
+  assert.equal(period1.startingAt, range.prevStartingAt);
+  assert.equal(period1.endingAt, range.prevEndingAt);
+});
+
+test("priorPeriodBounds: returns `count` contiguous, equal-length periods going backward with no gaps or overlaps", () => {
+  const startingAtMs = new Date("2026-06-01T00:00:00.000Z").getTime();
+  const periods = priorPeriodBounds(startingAtMs, 7, 4);
+  assert.equal(periods.length, 4);
+  assert.equal(periods[0].endingAt, "2026-06-01T00:00:00.000Z");
+  for (let i = 0; i < periods.length; i++) {
+    assert.equal(
+      new Date(periods[i].endingAt).getTime() - new Date(periods[i].startingAt).getTime(),
+      7 * DAY_MS,
+    );
+    if (i > 0) {
+      assert.equal(periods[i].endingAt, periods[i - 1].startingAt, `period ${i} must directly precede period ${i - 1}`);
+    }
+  }
+});
+
+test("priorPeriodBounds: unix fields agree with the ISO fields", () => {
+  const startingAtMs = new Date("2026-06-01T00:00:00.000Z").getTime();
+  const [period1] = priorPeriodBounds(startingAtMs, 7, 1);
+  assert.equal(period1.startingAtUnix, Math.floor(new Date(period1.startingAt).getTime() / 1000));
+  assert.equal(period1.endingAtUnix, Math.floor(new Date(period1.endingAt).getTime() / 1000));
 });

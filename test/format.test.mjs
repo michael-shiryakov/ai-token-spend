@@ -15,6 +15,10 @@ import {
   foldOther,
   isoToday,
   isoDaysAgo,
+  computeBaselineRange,
+  computeSpendAboveRange,
+  computeBlendedRate,
+  computeExpectedListRate,
 } from "../lib/format.mjs";
 
 test("money: under $1000 shows two decimal places, no k suffix", () => {
@@ -161,4 +165,148 @@ test("isoToday/isoDaysAgo: both format as YYYY-MM-DD, and isoDaysAgo(0) matches 
   assert.match(isoToday(), /^\d{4}-\d{2}-\d{2}$/);
   assert.match(isoDaysAgo(5), /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(isoDaysAgo(0), isoToday());
+});
+
+test("computeBaselineRange: fewer than 2 usable periods returns null", () => {
+  assert.equal(computeBaselineRange([]), null);
+  assert.equal(computeBaselineRange([100]), null);
+  assert.equal(computeBaselineRange([null, undefined, NaN, 100]), null);
+});
+
+test("computeBaselineRange: computes mean, stddev and an expected range of mean +/- stddev", () => {
+  const result = computeBaselineRange([100, 100, 100, 100]);
+  assert.equal(result.mean, 100);
+  assert.equal(result.stddev, 0);
+  assert.equal(result.min, 100);
+  assert.equal(result.max, 100);
+  assert.deepEqual(result.expectedRange, [100, 100]);
+  assert.equal(result.periodsUsed, 4);
+});
+
+test("computeBaselineRange: ignores null/NaN entries but still uses the rest", () => {
+  const result = computeBaselineRange([100, null, 200, NaN]);
+  assert.equal(result.periodsUsed, 2);
+  assert.equal(result.mean, 150);
+});
+
+test("computeBaselineRange: expectedRange never goes below zero", () => {
+  const result = computeBaselineRange([0, 0, 0, 100]);
+  assert.equal(result.expectedRange[0], 0);
+});
+
+test("computeSpendAboveRange: spend inside or below the range is zero, not negative", () => {
+  const range = computeBaselineRange([100, 100, 100, 100]);
+  assert.deepEqual(computeSpendAboveRange(100, range), {
+    amount: 0,
+    percentage: 0,
+    isAbove: false,
+  });
+  assert.deepEqual(computeSpendAboveRange(50, range), {
+    amount: 0,
+    percentage: 0,
+    isAbove: false,
+  });
+});
+
+test("computeSpendAboveRange: spend above the top of the range reports the overage amount and share of current spend", () => {
+  const range = computeBaselineRange([100, 100, 100, 100]);
+  const result = computeSpendAboveRange(150, range);
+  assert.equal(result.amount, 50);
+  assert.equal(result.isAbove, true);
+  assert.ok(Math.abs(result.percentage - (50 / 150) * 100) < 1e-9);
+});
+
+test("computeSpendAboveRange: null baseline or current spend returns null", () => {
+  assert.equal(computeSpendAboveRange(100, null), null);
+  assert.equal(computeSpendAboveRange(null, computeBaselineRange([1, 2])), null);
+});
+
+test("computeBlendedRate: splits cost by token type and blends across all three", () => {
+  const usage = {
+    uncachedInputTokens: 500_000,
+    cacheReadInputTokens: 500_000,
+    cacheCreationTokens: 0,
+    outputTokens: 1_000_000,
+  };
+  const tokenCosts = new Map([
+    ["uncached_input_tokens", 1],
+    ["cache_read_input_tokens", 0.1],
+    ["output_tokens", 10],
+  ]);
+  const result = computeBlendedRate(usage, tokenCosts);
+  assert.equal(result.totalSpend, 11.1);
+  assert.equal(result.ratePerMillion, (11.1 / 2_000_000) * 1_000_000);
+  const byType = Object.fromEntries(
+    result.byTokenType.map((t) => [t.type, t]),
+  );
+  assert.equal(byType.input.ratePerMillion, 2);
+  assert.equal(byType.cached.ratePerMillion, 0.2);
+  assert.equal(byType.output.ratePerMillion, 10);
+});
+
+test("computeBlendedRate: folds cache-creation writes into the input bucket", () => {
+  const usage = {
+    uncachedInputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationTokens: 1_000_000,
+    outputTokens: 0,
+  };
+  const tokenCosts = new Map([
+    ["cache_creation.ephemeral_5m_input_tokens", 3],
+    ["cache_creation.ephemeral_1h_input_tokens", 2],
+  ]);
+  const result = computeBlendedRate(usage, tokenCosts);
+  const input = result.byTokenType.find((t) => t.type === "input");
+  assert.equal(input.spend, 5);
+  assert.equal(input.tokens, 1_000_000);
+});
+
+test("computeBlendedRate: a token type with zero tokens reports a null rate instead of NaN/Infinity", () => {
+  const usage = {
+    uncachedInputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+  };
+  const result = computeBlendedRate(usage, new Map());
+  assert.equal(result.ratePerMillion, null);
+  for (const t of result.byTokenType) assert.equal(t.ratePerMillion, null);
+});
+
+test("computeExpectedListRate: weights list price by each model's own token mix", () => {
+  const usageByModel = new Map([
+    [
+      "claude-sonnet-5",
+      {
+        uncachedInputTokens: 1_000_000,
+        cacheReadInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 1_000_000,
+      },
+    ],
+    [
+      "claude-haiku-4-5",
+      {
+        uncachedInputTokens: 1_000_000,
+        cacheReadInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+      },
+    ],
+  ]);
+  const pricing = { "claude-sonnet-5": { input: 2, cached: 0.2, output: 10 } };
+  const result = computeExpectedListRate(
+    usageByModel,
+    (model) => pricing[model] ?? null,
+  );
+  // sonnet: $2 input + $10 output = $12; haiku is skipped (no pricing entry)
+  assert.equal(result.totalSpend, 12);
+  assert.equal(result.modelsSkipped, 1);
+});
+
+test("computeExpectedListRate: empty usage returns zero spend and a null rate, not NaN", () => {
+  const result = computeExpectedListRate(new Map(), () => null);
+  assert.equal(result.totalSpend, 0);
+  assert.equal(result.ratePerMillion, null);
+  assert.equal(result.modelsSkipped, 0);
 });

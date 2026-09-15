@@ -12,6 +12,13 @@ import { extname, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
 import { isSea, getAsset } from "node:sea";
+import {
+  computeBaselineRange,
+  computeSpendAboveRange,
+  computeBlendedRate,
+  computeExpectedListRate,
+  modelPricingFor,
+} from "./lib/format.mjs";
 
 // Directory this app's own files (and its config file, if any) live in — the project
 // source directory in dev, or the folder holding the double-clicked executable when
@@ -1519,6 +1526,102 @@ async function handleEfficiencyByModel(res, searchParams) {
   sendJson(res, 200, { models });
 }
 
+// Total spend (Anthropic + OpenAI) for one period, for the Saving
+// opportunities baseline — deliberately lighter than handleCostSummary since
+// the baseline only needs a single spend figure per period, not a full
+// product/model breakdown.
+async function fetchPeriodSpend(startingAt, endingAt, startingAtUnix, endingAtUnix) {
+  const [buckets, openAiBuckets] = await Promise.all([
+    fetchCostBuckets(startingAt, endingAt),
+    fetchOpenAiCostBuckets(startingAtUnix, endingAtUnix, []),
+  ]);
+  const days = Math.max(
+    1,
+    Math.round((new Date(endingAt).getTime() - new Date(startingAt).getTime()) / DAY_MS),
+  );
+  // Same "truncated by the org's history floor" guard as hasFullPreviousPeriod
+  // elsewhere — a partial period would understate spend and skew the baseline.
+  if (buckets.length < days) return null;
+  const anthropicSpend = aggregateCostBuckets(buckets).totals.spend;
+  const openaiSpend = aggregateOpenAiCostBuckets(openAiBuckets).totalSpend;
+  return anthropicSpend + openaiSpend;
+}
+
+async function handleSavingsSummary(res, searchParams) {
+  const {
+    days,
+    startingAt,
+    endingAt,
+    startingAtUnix,
+    endingAtUnix,
+    prevStartingAt,
+    prevEndingAt,
+  } = resolveRange(searchParams);
+  const baselinePeriods = priorPeriodBounds(
+    new Date(startingAt).getTime(),
+    days,
+    4,
+  );
+
+  const [
+    currentSpend,
+    baselineSpends,
+    usageBuckets,
+    tokenTypeCosts,
+    prevUsageBuckets,
+    prevTokenTypeCosts,
+    usageByModelBuckets,
+  ] = await Promise.all([
+    fetchPeriodSpend(startingAt, endingAt, startingAtUnix, endingAtUnix),
+    Promise.all(
+      baselinePeriods.map((p) =>
+        fetchPeriodSpend(p.startingAt, p.endingAt, p.startingAtUnix, p.endingAtUnix),
+      ),
+    ),
+    fetchUsageBuckets(startingAt, endingAt),
+    fetchCostByTokenType(startingAt, endingAt),
+    fetchUsageBuckets(prevStartingAt, prevEndingAt),
+    fetchCostByTokenType(prevStartingAt, prevEndingAt),
+    fetchUsageGroupedBy(startingAt, endingAt, "model"),
+  ]);
+
+  const baselineRange = computeBaselineRange(baselineSpends);
+  const spendAboveRange = computeSpendAboveRange(currentSpend, baselineRange);
+
+  const usage = aggregateUsage(usageBuckets);
+  const prevUsage = aggregateUsage(prevUsageBuckets);
+  const usageByModel = aggregateUsageGrouped(usageByModelBuckets, "model");
+
+  const anthropicActual = computeBlendedRate(usage, tokenTypeCosts);
+  const anthropicPrevious =
+    prevUsageBuckets.length >= days
+      ? computeBlendedRate(prevUsage, prevTokenTypeCosts)
+      : null;
+  const anthropicExpectedList = computeExpectedListRate(
+    usageByModel,
+    modelPricingFor,
+  );
+
+  sendJson(res, 200, {
+    currentSpend,
+    baseline: {
+      periods: baselinePeriods.map((p, i) => ({
+        startingAt: p.startingAt,
+        endingAt: p.endingAt,
+        spend: baselineSpends[i],
+      })),
+      ...baselineRange,
+    },
+    spendAboveRange,
+    anthropicRate: {
+      actual: anthropicActual,
+      previous: anthropicPrevious,
+      expectedList: anthropicExpectedList,
+    },
+    openaiRate: { available: false },
+  });
+}
+
 async function fetchActivitySummaries(startingDate) {
   if (!ANTHROPIC_ENABLED) return [];
   if (MOCK_MODE) return mockActivitySummaries(startingDate);
@@ -1893,6 +1996,29 @@ export function resolveRange(searchParams) {
     prevStartingAtUnix: unix(prevStartingAtMs),
     prevEndingAtUnix: unix(prevEndingAtMs),
   };
+}
+
+// `count` sequential period boundaries of length `days` immediately preceding
+// startingAtMs (a range's own startingAt, in ms) — period 1 is the same span
+// as resolveRange's prevStartingAt/prevEndingAt, period 2 is one more period
+// back, and so on. Used to build the Saving opportunities baseline from the
+// previous N completed periods rather than just the single previous period
+// resolveRange already exposes.
+export function priorPeriodBounds(startingAtMs, days, count) {
+  const iso = (ms) => new Date(ms).toISOString();
+  const unix = (ms) => Math.floor(ms / 1000);
+  const periods = [];
+  for (let i = 1; i <= count; i++) {
+    const periodEndingAtMs = startingAtMs - (i - 1) * days * DAY_MS;
+    const periodStartingAtMs = startingAtMs - i * days * DAY_MS;
+    periods.push({
+      startingAt: iso(periodStartingAtMs),
+      endingAt: iso(periodEndingAtMs),
+      startingAtUnix: unix(periodStartingAtMs),
+      endingAtUnix: unix(periodEndingAtMs),
+    });
+  }
+  return periods;
 }
 
 async function handleCostSummary(res, searchParams) {
@@ -3629,6 +3755,8 @@ const server = createServer(async (req, res) => {
       return await handleEfficiency(res, url.searchParams);
     if (url.pathname === "/api/efficiency-by-model")
       return await handleEfficiencyByModel(res, url.searchParams);
+    if (url.pathname === "/api/savings-summary")
+      return await handleSavingsSummary(res, url.searchParams);
     if (url.pathname === "/api/teams")
       return await handleTeams(res, url.searchParams);
     if (url.pathname === "/api/seats")
